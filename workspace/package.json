@@ -39,6 +39,7 @@
   "build": {
     "appId": "com.rabbit-erp.desktop",
     "productName": "Rabbit_ERP",
+    "publish": null,
     "directories": {
       "output": "release"
     },
@@ -46,6 +47,7 @@
       "dist/**/*",
       "electron/**/*",
       "package.json",
+      "app.config.cjs",
       "logo.png",
       "logo.ico"
     ],
