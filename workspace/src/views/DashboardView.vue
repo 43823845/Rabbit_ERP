@@ -1,0 +1,360 @@
+<script setup lang="ts">
+/**
+ * DashboardView.vue — 工作台/仪表盘页面
+ *
+ * 职责：凭证搜索与管理、凭证新增/编辑/查看、审核状态统计、列表高亮定位
+ *      依赖 VoucherModal（表单弹窗）和 VoucherListTable（列表组件）
+ */
+import { nextTick, onMounted, reactive, ref } from 'vue';
+import {
+  Document, Checked, CircleCheck,
+  Search, Delete, View, Plus,
+} from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import type { FinanceSubject, FinanceVoucher, VoucherFilter } from '../api';
+import { getFinanceApi } from '../api';
+import VoucherModal from '../components/VoucherModal.vue';
+import VoucherListTable from '../components/VoucherListTable.vue';
+
+const api = getFinanceApi();
+
+const subjects = ref<FinanceSubject[]>([]);
+const loading = ref(false);
+
+const filter = reactive<VoucherFilter>({
+  period: '2026-06', status: undefined, keyword: '',
+  subjectCode: undefined, startDate: '', endDate: '',
+  amountMin: undefined, amountMax: undefined,
+});
+
+const drafts = ref(0);
+const audited = ref(0);
+const posted = ref(0);
+const totalVouchers = ref(0);
+
+const voucherModal = reactive({ open: false, voucher: null as FinanceVoucher | null });
+
+onMounted(async () => {
+  const data = await api.bootstrap();
+  filter.period = data.book.current_period;
+  subjects.value = data.subjects;
+  await refreshStats();
+  await doSearch();
+});
+
+async function refreshStats() {
+  const all = await api.listVouchers({});
+  totalVouchers.value = all.length;
+  drafts.value = all.filter(v => v.status === 'draft').length;
+  audited.value = all.filter(v => v.status === 'audited').length;
+  posted.value = all.filter(v => v.status === 'posted').length;
+}
+
+const searchList = ref<FinanceVoucher[]>([]);
+const highlightRowId = ref<number | null>(null);
+const tableRef = ref<any>(null);
+
+async function doSearch() {
+  loading.value = true;
+  const f: VoucherFilter = { ...filter };
+  // 金额范围在客户端按凭证总金额过滤，不传给 API
+  const amountMin = f.amountMin;
+  const amountMax = f.amountMax;
+  delete f.amountMin;
+  delete f.amountMax;
+  const hasConditions = Object.values(f).some(v => v !== '' && v !== undefined && v !== null);
+  Object.keys(f).forEach(k => { const key = k as keyof VoucherFilter; if (f[key] === '' || f[key] === undefined || f[key] === null) delete f[key]; });
+  let result = await api.listVouchers(f);
+
+  // 客户端按凭证总金额（借方合计）过滤
+  if (amountMin !== undefined || amountMax !== undefined) {
+    result = result.filter(v => {
+      const total = v.entries.reduce((sum, e) => sum + (e.debit || 0), 0);
+      if (amountMin !== undefined && total < amountMin) return false;
+      if (amountMax !== undefined && total > amountMax) return false;
+      return true;
+    });
+  }
+
+  searchList.value = result;
+  highlightRowId.value = null;
+  loading.value = false;
+
+  // 搜索结果高亮第一行
+  if (result.length > 0 && hasConditions) {
+    highlightRowId.value = result[0].id;
+    await nextTick();
+    tableRef.value?.setCurrentRow?.(result[0]);
+  }
+}
+
+function resetFilter() {
+  filter.period = ''; filter.status = undefined; filter.keyword = '';
+  filter.subjectCode = undefined; filter.startDate = ''; filter.endDate = '';
+  filter.amountMin = undefined; filter.amountMax = undefined;
+}
+
+function openVoucher(v: FinanceVoucher) { voucherModal.voucher = v; voucherModal.open = true; }
+
+function newVoucher() { voucherModal.voucher = null; voucherModal.open = true; }
+
+async function handleSaved() {
+  await refreshStats(); await doSearch();
+}
+
+async function handleDeleted() { voucherModal.open = false; await refreshStats(); await doSearch(); }
+
+async function doAudit(v: FinanceVoucher) {
+  if (v.status !== 'draft') { ElMessage.warning('仅草稿状态的凭证可审核'); return; }
+  await ElMessageBox.confirm(`确定要审核凭证 ${v.voucher_word}-${v.voucher_no} 号吗？`, '确认审核', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' });
+  await api.auditVoucher(v.id);
+  ElMessage.success('审核成功');
+  await refreshStats(); await doSearch();
+}
+
+async function doPost(v: FinanceVoucher) {
+  if (v.status !== 'audited') { ElMessage.warning('仅已审核状态的凭证可过账'); return; }
+  await ElMessageBox.confirm(`确定要过账凭证 ${v.voucher_word}-${v.voucher_no} 号吗？过账后不可直接修改。`, '确认过账', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' });
+  await api.postVoucher(v.id);
+  ElMessage.success('过账成功');
+  await refreshStats(); await doSearch();
+}
+
+async function doDelete(v: FinanceVoucher) {
+  await ElMessageBox.confirm(`确定要删除凭证 ${v.voucher_word}-${v.voucher_no} 号吗？此操作不可撤销。`, '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'error' });
+  await api.deleteVoucher(v.id);
+  ElMessage.success('删除成功');
+  await refreshStats(); await doSearch();
+}
+</script>
+
+<template>
+  <div class="workspace">
+    <!-- 统计卡片 -->
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="stat-card__icon" style="background:#e6f4ff;color:#1677ff"><el-icon size="22"><Document /></el-icon></div>
+        <div class="stat-card__info"><span class="stat-card__value">{{ totalVouchers }}</span><span class="stat-card__label">本期凭证</span></div>
+        <div class="stat-card__bar" style="background:#1677ff"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card__icon" style="background:#fffbe6;color:#d48806"><el-icon size="22"><Checked /></el-icon></div>
+        <div class="stat-card__info"><span class="stat-card__value">{{ drafts }}</span><span class="stat-card__label">草稿待审</span></div>
+        <div class="stat-card__bar" style="background:#faad14"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card__icon" style="background:#e6f4ff;color:#1677ff"><el-icon size="22"><CircleCheck /></el-icon></div>
+        <div class="stat-card__info"><span class="stat-card__value">{{ audited }}</span><span class="stat-card__label">已审核</span></div>
+        <div class="stat-card__bar" style="background:#1677ff"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card__icon" style="background:#f6ffed;color:#389e3d"><el-icon size="22"><CircleCheck /></el-icon></div>
+        <div class="stat-card__info"><span class="stat-card__value">{{ posted }}</span><span class="stat-card__label">已过账</span></div>
+        <div class="stat-card__bar" style="background:#52c41a"></div>
+      </div>
+    </div>
+
+    <!-- 凭证查询面板 -->
+    <div class="panel">
+      <div class="panel__header">
+        <span class="panel__title"><el-icon><Search /></el-icon> 凭证查询</span>
+        <div style="display:flex;gap:8px">
+          <el-button size="small" type="primary" @click="newVoucher"><el-icon><Plus /></el-icon> 新增凭证</el-button>
+          <el-button size="small" @click="resetFilter">重置条件</el-button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="filter-row">
+          <div class="filter-item fi-keyword">
+            <label>关键词</label>
+            <el-input v-model="filter.keyword" placeholder="摘要/备注" clearable @keyup.enter="doSearch" />
+          </div>
+          <div class="filter-item fi-date">
+            <label>开始日期</label>
+            <el-date-picker v-model="filter.startDate" type="date" value-format="YYYY-MM-DD" placeholder="开始" />
+          </div>
+          <div class="filter-item fi-date">
+            <label>结束日期</label>
+            <el-date-picker v-model="filter.endDate" type="date" value-format="YYYY-MM-DD" placeholder="结束" />
+          </div>
+          <div class="filter-item fi-status">
+            <label>状态</label>
+            <el-select v-model="filter.status" placeholder="全部" clearable>
+              <el-option value="draft" label="草稿" />
+              <el-option value="audited" label="已审核" />
+              <el-option value="posted" label="已过账" />
+            </el-select>
+          </div>
+          <div class="filter-item fi-subject">
+            <label>科目</label>
+            <el-select v-model="filter.subjectCode" placeholder="全部" clearable filterable>
+              <el-option v-for="s in subjects" :key="s.code" :value="s.code" :label="`${s.code} ${s.name}`" />
+            </el-select>
+          </div>
+          <div class="filter-item fi-amount">
+            <label>凭证总金额</label>
+            <div class="amount-range">
+              <el-input-number v-model="filter.amountMin" :min="0" :precision="2" controls-position="right" placeholder="最低" />
+              <span class="filter-sep">—</span>
+              <el-input-number v-model="filter.amountMax" :min="0" :precision="2" controls-position="right" placeholder="最高" />
+            </div>
+          </div>
+          <el-button type="primary" @click="doSearch" :loading="loading" class="fi-search-btn"><el-icon><Search /></el-icon> 查询</el-button>
+        </div>
+      </div>
+
+      <VoucherListTable
+        ref="tableRef"
+        :data="searchList"
+        :loading="loading"
+        :highlight-row="true"
+        :highlight-row-id="highlightRowId"
+        :show-entry-count="true"
+        :show-amounts="true"
+      >
+        <template #suffix-columns>
+          <el-table-column label="操作" width="200">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="openVoucher(row)"><el-icon><View /></el-icon>查看</el-button>
+              <el-button v-if="row.status==='draft'" size="small" link type="primary" @click="openVoucher(row)">编辑</el-button>
+              <el-button v-if="row.status==='draft'" size="small" link @click="doAudit(row)">审核</el-button>
+              <el-button v-if="row.status==='audited'" size="small" link type="primary" @click="doPost(row)">过账</el-button>
+              <el-popconfirm v-if="row.status==='draft'" title="确定删除？" @confirm="doDelete(row)">
+                <template #reference>
+                  <el-button size="small" link type="danger"><el-icon><Delete /></el-icon></el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </template>
+      </VoucherListTable>
+
+      <el-empty v-if="!loading && searchList.length === 0" description="暂无凭证数据" />
+    </div>
+
+    <VoucherModal v-model:open="voucherModal.open" :voucher="voucherModal.voucher" :voucher-list="searchList"
+      :readonly="!!voucherModal.voucher && voucherModal.voucher.status !== 'draft'"
+      @saved="handleSaved" @deleted="handleDeleted" @navigate="voucherModal.voucher = $event"
+      @switch-to-create="voucherModal.voucher = null" />
+  </div>
+</template>
+
+<style scoped>
+/* ================================================================
+   DashboardView — 账簿金边卡片 + 暖白面板
+   ================================================================ */
+.workspace { display: flex; flex-direction: column; gap: 16px; }
+
+/* ---- 统计卡片 ---- */
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+@media (max-width: 1200px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  { .stat-row { grid-template-columns: 1fr; } }
+
+.stat-card {
+  background: var(--epp-paper);
+  border-radius: 2px;
+  padding: 18px 20px;
+  display: flex; align-items: center; gap: 16px;
+  position: relative; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.05);
+  border: 1px solid var(--epp-line-light);
+  transition: border-color 0.2s, box-shadow 0.25s;
+}
+
+.stat-card:hover {
+  border-color: var(--epp-line);
+  box-shadow: 0 2px 12px rgba(10, 30, 61, 0.07);
+}
+
+/* 左侧金边 */
+.stat-card__bar {
+  position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+  border-radius: 0 2px 2px 0;
+}
+
+.stat-card__icon {
+  width: 46px; height: 46px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+
+.stat-card__info { display: flex; flex-direction: column; gap: 2px; }
+
+.stat-card__value {
+  font-size: 26px; font-weight: 700; color: var(--epp-ink-text);
+  line-height: 1.15; font-variant-numeric: tabular-nums;
+}
+
+.stat-card__label {
+  font-size: 12px; color: var(--epp-ink-sub); letter-spacing: 0.5px;
+}
+
+/* ---- 内容面板 ---- */
+.panel {
+  background: var(--epp-paper);
+  border-radius: 2px;
+  border: 1px solid var(--epp-line-light);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.04);
+}
+
+.panel__header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid var(--epp-line);
+  gap: 10px; flex-wrap: wrap;
+}
+
+.panel__title {
+  font-size: 14px; font-weight: 600; color: var(--epp-ink-text);
+  display: flex; align-items: center; gap: 8px;
+}
+
+.panel__title .el-icon { color: var(--epp-accent); }
+
+/* 筛选栏 */
+.filter-bar {
+  padding: 14px 22px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--epp-line-light);
+}
+
+.filter-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+
+.filter-item { display: flex; flex-direction: column; gap: 4px; }
+
+.filter-item label {
+  font-size: 11px; color: var(--epp-ink-sub);
+  white-space: nowrap; font-weight: 500; letter-spacing: 0.3px;
+}
+
+.fi-keyword    { flex: 1 1 120px; min-width: 120px; max-width: 200px; }
+.fi-date       { flex: 0 1 130px; min-width: 120px; }
+.fi-status     { flex: 0 1 100px; min-width: 90px; }
+.fi-subject    { flex: 1 1 140px; min-width: 130px; max-width: 220px; }
+.fi-amount     { flex: 1 1 240px; min-width: 230px; max-width: 340px; }
+.fi-search-btn { flex-shrink: 0; align-self: flex-end; }
+
+.filter-item :deep(.el-input),
+.filter-item :deep(.el-select),
+.filter-item :deep(.el-date-editor) {
+  width: 100% !important;
+}
+
+.amount-range { display: flex; align-items: center; gap: 6px; }
+.amount-range :deep(.el-input-number) { flex: 1; min-width: 0; }
+.filter-sep { color: var(--epp-line); flex-shrink: 0; }
+
+/* 表格 — 账簿暖色 */
+.panel :deep(.el-table) {
+  --el-table-border-color: var(--epp-line-light);
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-row-hover-bg-color: #f8fafc;
+}
+
+.panel :deep(.el-table__body-wrapper) {
+  border-bottom: 1px solid var(--epp-line-light);
+}
+</style>

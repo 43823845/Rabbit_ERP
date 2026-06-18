@@ -1,0 +1,160 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  /* === 品牌色 — 深蓝黑 + 青绿强调 === */
+  --epp-ink: #0f172a;
+  --epp-ink-light: #1e293b;
+  --epp-accent: #0891b2;
+  --epp-accent-light: #06b6d4;
+  --epp-ledger: #f1f5f9;
+  --epp-paper: #ffffff;
+  --epp-ink-text: #0f172a;
+  --epp-ink-sub: #64748b;
+  --epp-line: #cbd5e1;
+  --epp-line-light: #e2e8f0;
+  --epp-danger: #ef4444;
+  --epp-success: #10b981;
+
+  /* === 向后兼容别名 === */
+  --epp-gold: var(--epp-accent);
+  --epp-gold-light: var(--epp-accent-light);
+
+  /* === Element Plus 全局覆盖 === */
+  --el-color-primary: var(--epp-success);
+  --el-color-primary-light-1: #34d399;
+  --el-color-primary-light-2: #6ee7b7;
+  --el-color-primary-light-3: #a7f3d0;
+  --el-color-primary-light-4: #d1fae5;
+  --el-color-primary-light-5: #ecfdf5;
+  --el-color-primary-light-6: #f0fdf4;
+  --el-color-primary-light-7: #f0fdf4;
+  --el-color-primary-light-8: #f0fdf4;
+  --el-color-primary-light-9: #f0fdf4;
+  --el-color-primary-dark-1: #059669;
+  --el-color-primary-dark-2: #047857;
+
+  --el-switch-on-color: var(--epp-success);
+
+  --el-color-success: var(--epp-success);
+  --el-color-warning: var(--epp-accent);
+  --el-color-danger: var(--epp-danger);
+  --el-color-info: var(--epp-ink-sub);
+
+  /* 通用背景 */
+  --el-bg-color-page: var(--epp-ledger);
+  --el-bg-color: var(--epp-paper);
+  --el-bg-color-overlay: var(--epp-paper);
+
+  /* 边框 */
+  --el-border-color: var(--epp-line);
+  --el-border-color-light: var(--epp-line-light);
+  --el-border-color-lighter: #f8fafc;
+
+  /* 表格 */
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-border-color: var(--epp-line);
+
+  /* 标签/标记 */
+  --el-tag-bg-color: var(--epp-paper);
+
+  /* === 全局字号（Element Plus 所有组件生效）=== */
+  --el-font-size-extra-small: 13px;
+  --el-font-size-small: 14px;
+  --el-font-size-base: 15px;
+  --el-font-size-medium: 15px;
+  --el-font-size-large: 17px;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  margin: 0;
+  color: var(--epp-ink-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Microsoft YaHei",
+    "Segoe UI", Roboto,
+    sans-serif;
+}
+
+/* ---- 页面通用样式 ---- */
+.page-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.page-title h1 {
+  margin: 0;
+  color: var(--epp-ink-text);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.page-title p {
+  margin: 4px 0 0;
+  color: var(--epp-ink-sub);
+  font-size: 0.8125rem;
+}
+
+.panel-card {
+  border-radius: 2px !important;
+  border-color: var(--epp-line-light) !important;
+  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.04) !important;
+}
+
+.amount-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Element Plus 表格全局优化 —— 冷色专业风格 ---- */
+.el-table th.el-table__cell {
+  background: #f1f5f9 !important;
+  color: var(--epp-ink-sub) !important;
+  font-weight: 600 !important;
+  font-size: 0.8125rem !important;
+  letter-spacing: 0.4px;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #f8fafc;
+}
+
+/* ---- Element Plus 全局按钮 —— 绿色 ---- */
+.el-button--primary {
+  --el-button-bg-color: var(--epp-success);
+  --el-button-border-color: var(--epp-success);
+  --el-button-hover-bg-color: #059669;
+  --el-button-hover-border-color: #059669;
+  --el-button-active-bg-color: #047857;
+  --el-button-active-border-color: #047857;
+  --el-button-disabled-bg-color: var(--el-disabled-bg-color);
+  --el-button-disabled-border-color: var(--el-border-color-lighter);
+  --el-button-disabled-text-color: var(--el-disabled-text-color);
+}
+
+/* ---- 响应式 ---- */
+@media (max-width: 900px) {
+  body { min-width: 0; }
+}
+
+/* ---- 打印 ---- */
+@media print {
+  .app-topbar,
+  .app-sider,
+  .page-title,
+  .vch-bar,
+  .vch-footer,
+  .el-dialog__header {
+    display: none !important;
+  }
+
+  body { background: #fff; }
+}

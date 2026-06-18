@@ -1,0 +1,76 @@
+{
+  "name": "rabbit-erp-desktop",
+  "version": "0.1.1",
+  "description": "Rabbit ERP - 财务管理系统",
+  "author": "Rabbit ERP",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "dev:electron": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vue-tsc --noEmit && vite build",
+    "predev": "node scripts/sync-config.cjs",
+    "prebuild:exe": "node scripts/sync-config.cjs",
+    "build:exe": "vue-tsc --noEmit && vite build && set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&& set ELECTRON_CUSTOM_DIR=v35.7.5&& electron-builder --win --x64 --publish=never",
+    "build:exe:portable": "vue-tsc --noEmit && vite build && electron-builder --win portable --x64 --publish=never",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "better-sqlite3": "^11.0.0",
+    "element-plus": "^2.14.2",
+    "exceljs": "^4.4.0",
+    "html2canvas": "^1.4.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "concurrently": "^9.1.2",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "vue-tsc": "^2.2.8",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.rabbit-erp.desktop",
+    "productName": "Rabbit_ERP",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "logo.png",
+      "logo.ico"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "logo.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Rabbit_ERP"
+    }
+  }
+}

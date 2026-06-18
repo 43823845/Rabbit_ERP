@@ -1,0 +1,279 @@
+<script setup lang="ts">
+/**
+ * App.vue — 应用根组件
+ *
+ * 职责：全局布局（侧栏导航 + 顶栏 + 主内容区）、公司切换、Electron 无边框窗口控制
+ */
+import { computed, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Timer, Grid, Setting, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
+import { useAuth } from './auth';
+import { getFinanceApi } from './api';
+import AppIcon from './components/AppIcon.vue';
+import type { Company } from './api';
+import { APP_CONFIG } from './config';
+
+const route = useRoute();
+const router = useRouter();
+const auth = useAuth();
+const api = getFinanceApi();
+
+const companies = ref<Company[]>([]);
+const collapsed = ref(false);
+const routerViewKey = ref(0);
+
+const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
+function winMin() { isElectron && (window as any).electronAPI.windowMin(); }
+function winMax() { isElectron && (window as any).electronAPI.windowMax(); }
+
+/* 是否处于登录页面 —— 登录页不展示侧栏和顶栏 */
+const isLoginPage = computed(() => route.path === '/login');
+
+const menuItems = [
+  { key: '/dashboard', label: '工作台', icon: HomeFilled },
+  { key: '/voucher',   label: '凭证',   icon: Document },
+  { key: '/ledger',    label: '账簿',   icon: Notebook },
+  { key: '/reports',   label: '报表',   icon: DataAnalysis },
+  { key: '/closing',   label: '结账',   icon: Timer },
+  { key: '/subjects',  label: '科目',   icon: Grid },
+  { key: '/opening',   label: '初始余额', icon: Wallet },
+  { key: '/settings',  label: '设置',   icon: Setting },
+];
+
+const currentTitle = computed(() => menuItems.find(m => m.key === route.path)?.label || APP_CONFIG.title);
+
+function handleMenuClick(key: string) {
+  if (key !== route.path) {
+    router.push(key);
+  }
+}
+
+async function loadCompanies() {
+  companies.value = await api.getCompanies();
+}
+
+async function handleSwitchCompany(companyId: string) {
+  await api.switchCompany(companyId);
+  const c = companies.value.find(x => x.id === companyId);
+  if (auth.state.user) {
+    auth.state.user.companyId = companyId;
+    auth.state.user.companyName = c?.name || '';
+  }
+  routerViewKey.value++; // 触发 router-view 重新挂载，刷新数据
+  ElMessage.success(`已切换到「${c?.name}」`);
+}
+
+function handleLogout() {
+  auth.logout();
+  router.replace('/login');
+}
+
+function handleUserCmd(cmd: string) {
+  if (cmd === 'logout') handleLogout();
+}
+</script>
+
+<template>
+  <!-- 未登录 / 登录页：只显示 router-view -->
+  <div v-if="isLoginPage" class="login-wrapper">
+    <router-view />
+  </div>
+
+  <!-- 已登录：完整管理后台布局 -->
+  <div v-else class="app-shell">
+    <!-- 顶部栏 -->
+    <header class="app-topbar">
+      <div class="topbar-left">
+        <AppIcon :size="28" class="brand-icon" />
+        <span class="brand-text">{{ APP_CONFIG.productName }}</span>
+        <span class="topbar-divider">|</span>
+        <span class="topbar-title">{{ currentTitle }}</span>
+      </div>
+      <div class="topbar-right" v-if="auth.state.loggedIn">
+        <span class="topbar-company-label">当前账套：{{ auth.state.user?.companyName || '未选择' }}</span>
+        <el-dropdown @command="handleSwitchCompany" trigger="click" class="mx-1">
+          <span class="topbar-link" @click="loadCompanies">
+            <el-icon><Sort /></el-icon>
+            切换账套
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="c in companies" :key="c.id" :command="c.id">
+                {{ c.name }}
+                <el-tag v-if="c.id === auth.state.user?.companyId" type="primary" size="small" style="margin-left:6px">当前</el-tag>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-divider direction="vertical" />
+        <el-dropdown trigger="click" @command="handleUserCmd">
+          <span class="topbar-link">
+            <el-icon><User /></el-icon> {{ auth.state.user?.username }}
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="logout">
+                <el-icon><SwitchButton /></el-icon> 退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <!-- 窗口控制按钮（Electron 无边框模式） -->
+        <template v-if="isElectron">
+          <span class="win-ctrl-spacer"></span>
+          <span class="win-ctrl-btn" @click="winMin" title="最小化"><el-icon><Minus /></el-icon></span>
+          <span class="win-ctrl-btn" @click="winMax" title="最大化"><el-icon><CopyDocument /></el-icon></span>
+        </template>
+      </div>
+    </header>
+
+    <!-- 下方主体 -->
+    <div class="app-body">
+      <!-- 左侧导航 -->
+      <aside class="app-sidebar" :class="{ 'sidebar-fold': collapsed }">
+        <el-menu
+          :default-active="route.path"
+          :collapse="collapsed"
+          :collapse-transition="false"
+          @select="handleMenuClick"
+        >
+          <el-menu-item
+            v-for="item in menuItems"
+            :key="item.key"
+            :index="item.key"
+            class="sidebar-menu-item"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+            <template #title>{{ item.label }}</template>
+          </el-menu-item>
+        </el-menu>
+        <div class="sidebar-foot">
+          <el-button text size="small" class="fold-btn" @click="collapsed = !collapsed">
+            <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
+            {{ !collapsed ? '收起' : '' }}
+          </el-button>
+        </div>
+      </aside>
+
+      <!-- 内容区 -->
+      <main class="app-content">
+        <router-view :key="routerViewKey" />
+      </main>
+    </div>
+  </div>
+</template>
+
+<style>
+html, body, #app { margin: 0; padding: 0; width: 100%; height: 100%; }
+
+/* ---- 登录页容器（无顶栏/侧栏） ---- */
+.login-wrapper {
+  position: fixed; inset: 0;
+}
+
+/* ---- 管理后台外壳 ---- */
+.app-shell {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--epp-ledger);
+}
+
+.app-topbar {
+  height: 50px; min-height: 50px; padding: 0 12px;
+  background: var(--epp-ink);
+  border-bottom: 2px solid var(--epp-accent);
+  display: flex; align-items: center;
+  justify-content: space-between; flex-shrink: 0; z-index: 100;
+  -webkit-app-region: drag;
+}
+.app-topbar .el-dropdown,
+.app-topbar .el-button,
+.app-topbar .el-input,
+.win-ctrl-btn,
+.topbar-link {
+  -webkit-app-region: no-drag;
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.brand-icon {
+  width: 26px; height: 26px; border-radius: 4px; flex-shrink: 0;
+}
+.brand-text { font-size: 15px; font-weight: 700; color: #f0ede6; letter-spacing: 1px; }
+.topbar-divider { color: rgba(255,255,255,.15); font-size: 17px; user-select: none; }
+.topbar-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,.8); margin: 0; }
+.topbar-right { display: flex; align-items: center; gap: 4px; }
+.topbar-company-label {
+  color: rgba(255,255,255,.6); font-size: 12px; margin-right: 4px;
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar-link {
+  color: rgba(255,255,255,.7); font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 3px;
+}
+.topbar-link:hover { color: #fff; background: rgba(255,255,255,.08); }
+
+/* el-divider 在墨蓝色顶栏中 */
+.app-topbar :deep(.el-divider--vertical) {
+  border-left-color: rgba(255,255,255,.12);
+}
+
+/* 窗口控制按钮 */
+.win-ctrl-spacer { width: 8px; }
+.win-ctrl-btn {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,.5); cursor: pointer; border-radius: 3px;
+  transition: background .12s; font-size: 14px;
+}
+.win-ctrl-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+.app-body { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+.app-sidebar {
+  width: 135px; min-width: 135px; max-width: 135px;
+  background: var(--epp-paper);
+  border-right: 1px solid var(--epp-line-light);
+  display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden;
+}
+.sidebar-fold { width: 64px !important; min-width: 64px !important; max-width: 64px !important; }
+
+/* Element Plus Menu — 账簿风格 */
+.app-sidebar .el-menu {
+  flex: 1;
+  background: transparent;
+  border-right: none;
+  padding: 8px 0;
+}
+.app-sidebar .el-menu-item {
+  height: 42px; line-height: 42px; margin-bottom: 2px;
+  padding-left: 12px !important; font-size: 14px;
+  color: var(--epp-ink-sub); border-radius: 2px;
+}
+.app-sidebar .el-menu-item:hover {
+  color: var(--epp-ink-text);
+  background-color: rgba(8, 145, 178, 0.06);
+}
+.app-sidebar .el-menu-item.is-active {
+  color: var(--epp-ink);
+  background-color: rgba(8, 145, 178, 0.1);
+  font-weight: 600;
+  border-right: 2px solid var(--epp-accent);
+}
+.app-sidebar .el-menu-item.is-disabled {
+  opacity: .35;
+}
+.app-sidebar .el-icon {
+  width: 18px; height: 18px; font-size: 18px; margin-right: 10px;
+}
+
+.sidebar-foot {
+  padding: 12px 16px; border-top: 1px solid var(--epp-line-light); flex-shrink: 0;
+}
+.fold-btn { width: 100%; color: var(--epp-ink-sub); font-size: 13px; }
+.fold-btn:hover { color: var(--epp-accent); }
+
+.app-content {
+  flex: 1; padding: 20px 28px; overflow-y: auto;
+  overflow-x: hidden; min-width: 0;
+  background: var(--epp-ledger);
+}
+</style>
