@@ -120,7 +120,7 @@ function resetFilters() {
 }
 
 /* ---- 操作 ---- */
-function isBuiltin(row: SubjectTreeNode) { return row.level === 1 && row.builtin === 1; }
+function isBuiltin(row: FinanceSubject) { return row.level === 1 && row.builtin === 1; }
 
 /** 表格引用（用于程序化展开/收起） */
 const subjectTableRef = ref();
