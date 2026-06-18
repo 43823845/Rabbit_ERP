@@ -18,7 +18,7 @@ function applyCompanyMethods(FinanceDatabase) {
   proto.getCompanies = function () {
     if (!this.db) return [];
     return this.db.prepare(
-      `SELECT id, name, contact_person AS contactPerson, phone, address,
+      `SELECT id, name, contact_person AS contactPerson, legal_representative AS legalRepresentative, phone, address,
               tax_no AS taxNo, current_period AS period, created_at AS createdAt
        FROM sys_company WHERE enabled = 1 ORDER BY created_at`
     ).all();
@@ -27,12 +27,12 @@ function applyCompanyMethods(FinanceDatabase) {
   /**
    * 创建公司（同时自动创建关联账套、预置科目、期间、凭证字等）
    */
-  proto.createCompany = function ({ name, contactPerson, phone, address, taxNo }) {
+  proto.createCompany = function ({ name, contactPerson, legalRepresentative, phone, address, taxNo }) {
     const self = this;
     const tx = this.db.transaction(() => {
       const cr = self.db.prepare(
-        'INSERT INTO sys_company (name, contact_person, phone, address, tax_no) VALUES (?, ?, ?, ?, ?)'
-      ).run(name, contactPerson || '', phone || '', address || '', taxNo || '');
+        'INSERT INTO sys_company (name, contact_person, legal_representative, phone, address, tax_no) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(name, contactPerson || '', legalRepresentative || '', phone || '', address || '', taxNo || '');
 
       const br = self.db.prepare(
         'INSERT INTO acct_book (company_id, name, current_period) VALUES (?, ?, ?)'
@@ -55,7 +55,7 @@ function applyCompanyMethods(FinanceDatabase) {
 
     const id = tx();
     return this.db.prepare(
-      `SELECT id, name, contact_person AS contactPerson, phone, address,
+      `SELECT id, name, contact_person AS contactPerson, legal_representative AS legalRepresentative, phone, address,
               tax_no AS taxNo, current_period AS period, created_at AS createdAt
        FROM sys_company WHERE id = ?`
     ).get(id);
@@ -64,11 +64,12 @@ function applyCompanyMethods(FinanceDatabase) {
   /**
    * 更新公司信息
    */
-  proto.updateCompany = function ({ id, name, contactPerson, phone, address, taxNo }) {
+  proto.updateCompany = function ({ id, name, contactPerson, legalRepresentative, phone, address, taxNo }) {
     const parts = [];
     const params = [];
     if (name !== undefined) { parts.push('name = ?'); params.push(name); }
     if (contactPerson !== undefined) { parts.push('contact_person = ?'); params.push(contactPerson); }
+    if (legalRepresentative !== undefined) { parts.push('legal_representative = ?'); params.push(legalRepresentative); }
     if (phone !== undefined) { parts.push('phone = ?'); params.push(phone); }
     if (address !== undefined) { parts.push('address = ?'); params.push(address); }
     if (taxNo !== undefined) { parts.push('tax_no = ?'); params.push(taxNo); }
@@ -82,7 +83,7 @@ function applyCompanyMethods(FinanceDatabase) {
       this._log('update_company', `更新公司信息 id=${id}`);
     }
     return this.db.prepare(
-      `SELECT id, name, contact_person AS contactPerson, phone, address,
+      `SELECT id, name, contact_person AS contactPerson, legal_representative AS legalRepresentative, phone, address,
               tax_no AS taxNo, current_period AS period, created_at AS createdAt
        FROM sys_company WHERE id = ?`
     ).get(id);

@@ -37,29 +37,28 @@ function onViewed() { viewModalOpen.value = false; refresh(); }
 function onSelectionChange(rows: FinanceVoucher[]) { selectedVouchers.value = rows; }
 
 async function handleAudit(v: FinanceVoucher) {
-  const r: any = await api.auditVoucher(v.id);
+  const r = await api.auditVoucher(v.id);
   if (r?.__error) { ElMessage.error(r.__error); return; }
   ElMessage.success('已审核'); refresh();
 }
 async function handleUnaudit(v: FinanceVoucher) {
-  const r: any = await api.unauditVoucher(v.id);
+  const r = await api.unauditVoucher(v.id);
   if (r?.__error) { ElMessage.error(r.__error); return; }
   ElMessage.success('已取消审核'); refresh();
 }
 async function handlePost(v: FinanceVoucher) {
-  const r: any = await api.postVoucher(v.id);
+  const r = await api.postVoucher(v.id);
   if (r?.__error) { ElMessage.error(r.__error); return; }
   ElMessage.success('已过账'); refresh();
 }
 async function handleUnpost(v: FinanceVoucher) {
-  const r: any = await api.unpostVoucher(v.id);
+  const r = await api.unpostVoucher(v.id);
   if (r?.__error) { ElMessage.error(r.__error); return; }
   ElMessage.success('已反过账'); refresh();
 }
 async function handleDelete(v: FinanceVoucher) {
   await ElMessageBox.confirm(`确定删除凭证 ${v.voucher_word}-${v.voucher_no} 号？`, '确认删除', { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' });
-  const r: any = await api.deleteVoucher(v.id);
-  if (r?.__error) { ElMessage.error(r.__error); return; }
+  await api.deleteVoucher(v.id);
   ElMessage.success('已删除'); refresh();
 }
 
@@ -132,7 +131,7 @@ async function handleExport() {
       const fileName = `${v.voucher_word}-${String(v.voucher_no).padStart(3, '0')}_${dateStr}.png`;
 
       if (window.electronAPI) {
-        const result: any = await window.electronAPI.invoke('save-png', { dataUrl, fileName });
+        const result = await window.electronAPI.invoke('save-png', { dataUrl, fileName }) as { success?: boolean; error?: string };
         if (result?.success) successCount++;
         else { failCount++; console.error(`保存失败 [${fileName}]:`, result?.error); }
       } else {
@@ -251,11 +250,20 @@ async function handleExport() {
   overflow: hidden;
 }
 
-/* 内部表格适配 */
+/* 内部表格适配 — 蓝灰色系，与整体设计统一 */
 .panel :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-tr-bg-color: #fafbfc;
+  --el-table-row-hover-bg-color: #f3f6f9;
+}
+
+.panel :deep(.el-table__body tr) {
+  background-color: #fafbfc;
+}
+.panel :deep(.el-table__body tr:hover > td) {
+  background-color: #f3f6f9 !important;
+  border-bottom-color: var(--epp-line-light) !important;
 }
 
 .panel :deep(.el-table__body-wrapper) {

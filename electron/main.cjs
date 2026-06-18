@@ -56,7 +56,7 @@ function createTray() {
 
   // 双击托盘图标显示主窗口
   tray.on('double-click', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
@@ -68,14 +68,18 @@ function createTray() {
     {
       label: `显示 ${config.title}`,
       click: () => {
-        if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
+        if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
       },
     },
     { type: 'separator' },
     {
       label: '退出应用',
       click: () => {
-        tray = null;
+        if (tray) {
+          tray.removeAllListeners();
+          tray.destroy();
+          tray = null;
+        }
         app.quit();
       },
     },
@@ -171,7 +175,14 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => database.close());
+app.on('before-quit', () => {
+  if (tray) {
+    tray.removeAllListeners();
+    tray.destroy();
+    tray = null;
+  }
+  database.close();
+});
 
 function registerIpc() {
   const wrap = (name, fn) => ipcMain.handle(`finance:${name}`, (_e, p) => { try { return fn(p); } catch (err) { return { __error: err.message }; } });

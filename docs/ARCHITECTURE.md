@@ -172,13 +172,18 @@ VoucherModal.vue (凭证弹窗)
     │   └── getTrialBalance(period)
     │       └── 基于科目余额表 + 方向判定
     │
-    ├── 利润表
+    ├── 利润表 (ReportsView)
     │   └── getProfitStatement(period)
-    │       └── income 科目(负数取反) - expense 科目
+    │       └── shared/report-templates.cjs 共享公式引擎
+    │           ├── fillTemplateAmount() 统一计算
+    │           └── getTemplatesByType('profit') 获取模板行
     │
-    └── 资产负债表
+    └── 资产负债表 (ReportsView)
         └── getBalanceSheet(period)
-            └── asset 科目 + liability 科目(取反) + equity(取反) + 本期利润
+            └── shared/report-templates.cjs 共享公式引擎
+                ├── fillTemplateAmount() 统一计算
+                ├── getTemplatesByType('balance') 获取模板行
+                └── 跨报表引用：净利润 = 利润表 row_no=32
 ```
 
 ---

@@ -17,6 +17,11 @@ const activeTab = ref<'profit' | 'bs' | 'cashflow'>('bs');
 const loading = ref(false);
 const companyName = ref('');
 
+// 报表签名数据
+const signUnitHead = ref('');    // 单位负责人（来自公司 contactPerson 联系人）
+const signAccountant = ref('');  // 会计负责人
+const signPreparer = ref('');    // 制表人（当前登录用户）
+
 const profitStatement = ref<ProfitStatement | null>(null);
 const balanceSheet = ref<BalanceSheet | null>(null);
 const cashFlowStatement = ref<CashFlowStatement | null>(null);
@@ -31,7 +36,12 @@ interface BsTableRow {
 
 const bsTableData = computed<BsTableRow[]>(() => {
   const assets = balanceSheet.value?.asset_rows || [];
-  const right = [...(balanceSheet.value?.liability_rows || []), ...(balanceSheet.value?.equity_rows || [])];
+  // 右侧：负债 + 3行空白 + 所有者权益
+  const right = [
+    ...(balanceSheet.value?.liability_rows || []),
+    ...Array(3).fill(null),
+    ...(balanceSheet.value?.equity_rows || []),
+  ];
   const maxLen = Math.max(assets.length, right.length);
   const rows: BsTableRow[] = [];
   for (let i = 0; i < maxLen; i++) {
@@ -65,6 +75,20 @@ const selectedMonth = ref('06');
 onMounted(async () => {
   const data = await api.bootstrap();
   companyName.value = data.book.company_name || '';
+
+  // 获取签名数据
+  try {
+    const companies = await api.getCompanies();
+    const currentCompany = companies.find(c => c.name === companyName.value) || companies[0];
+    if (currentCompany?.contactPerson) signUnitHead.value = currentCompany.contactPerson;
+  } catch (e) { console.warn('[ReportsView] 获取公司信息失败:', e) }
+  try {
+    const profile = await api.getUserProfile();
+    if (profile?.alias) {
+      signAccountant.value = profile.alias;  // 会计负责人 = 当前登录用户
+      signPreparer.value = profile.alias;    // 制表人 = 当前登录用户
+    }
+  } catch (e) { console.warn('[ReportsView] 获取用户信息失败:', e) }
 
   // 智能选择初始期间：优先使用有已过账凭证的期间
   let p = data.book.current_period || '2026-06';
@@ -185,9 +209,11 @@ async function exportExcel() {
   const a = document.createElement('a');
   const titleMap: Record<string, string> = { profit: '利润表', bs: '资产负债表', cashflow: '现金流量表' };
   const title = titleMap[activeTab.value] || '报表';
-  const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  const month = `${selectedYear.value}-${String(selectedMonth.value).padStart(2, '0')}`;
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
   a.href = url;
-  a.download = `${companyName.value}-${title}-${ts}.xlsx`;
+  a.download = `${title}_${month}_${time}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -233,7 +259,20 @@ function buildProfitSheet(wb: any) {
     else if (r.is_total) ws.getRow(rowNum).height = 18;
   });
 
+  // 签名行
+  addSignatureFooter(ws, dataRows.length + 4);
+
   ws.views = [{ state: 'frozen', ySplit: 3 }];
+}
+
+/** 在 Excel 底部添加签名行 */
+function addSignatureFooter(ws: any, startRow: number) {
+  ws.mergeCells(startRow, 1, startRow, 2);
+  ws.mergeCells(startRow, 3, startRow, 4);
+  setCell(ws, startRow, 1, `单位负责人：${signUnitHead.value}`, { halign: 'left', fontSize: 10 });
+  setCell(ws, startRow, 3, `会计负责人：${signAccountant.value}`, { halign: 'center', fontSize: 10 });
+  ws.mergeCells(startRow + 1, 1, startRow + 1, 2);
+  setCell(ws, startRow + 1, 1, `制表人：${signPreparer.value}`, { halign: 'left', fontSize: 10 });
 }
 
 function buildBalanceSheet(wb: any) {
@@ -246,7 +285,8 @@ function buildBalanceSheet(wb: any) {
   const assets = balanceSheet.value?.asset_rows || [];
   const liabs = balanceSheet.value?.liability_rows || [];
   const equits = balanceSheet.value?.equity_rows || [];
-  const rightRows = [...liabs, ...equits];
+  // 右侧：负债 + 3行空白 + 所有者权益
+  const rightRows = [...liabs, ...Array(3).fill(null), ...equits];
   const totalDataRows = Math.max(assets.length, rightRows.length);
 
   ws.getColumn(1).width = 22;
@@ -300,6 +340,8 @@ function buildBalanceSheet(wb: any) {
     }
   }
 
+  addSignatureFooter(ws, totalDataRows + 4);
+
   ws.views = [{ state: 'frozen', ySplit: 3 }];
 }
 
@@ -339,6 +381,8 @@ function buildCashFlowSheet(wb: any) {
     if (isHdr) ws.getRow(rowNum).height = 20;
     else if (r.is_total) ws.getRow(rowNum).height = 18;
   });
+
+  addSignatureFooter(ws, dataRows.length + 4);
 
   ws.views = [{ state: 'frozen', ySplit: 3 }];
 }
@@ -485,9 +529,18 @@ function printReport() {
             当前期间暂无已过账凭证数据，请确认凭证已过账或切换期间
           </div>
           <div class="rpt-form-footer">
-            <span>单位负责人：</span>
-            <span>会计负责人：</span>
-            <span>制表人：</span>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">单位负责人：</span>
+              <span class="rpt-form-footer-line">{{ signUnitHead }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">会计负责人：</span>
+              <span class="rpt-form-footer-line">{{ signAccountant }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">制表人：</span>
+              <span class="rpt-form-footer-line">{{ signPreparer }}</span>
+            </div>
           </div>
         </div>
       </template>
@@ -539,9 +592,18 @@ function printReport() {
             当前期间暂无已过账凭证数据，请确认凭证已过账或切换期间
           </div>
           <div class="rpt-form-footer">
-            <span>单位负责人：</span>
-            <span>会计负责人：</span>
-            <span>制表人：</span>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">单位负责人：</span>
+              <span class="rpt-form-footer-line">{{ signUnitHead }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">会计负责人：</span>
+              <span class="rpt-form-footer-line">{{ signAccountant }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">制表人：</span>
+              <span class="rpt-form-footer-line">{{ signPreparer }}</span>
+            </div>
           </div>
         </div>
       </template>
@@ -591,9 +653,18 @@ function printReport() {
             当前期间暂无非零现金流量数据，请确认已过账凭证中有现金科目发生额
           </div>
           <div class="rpt-form-footer">
-            <span>单位负责人：</span>
-            <span>会计负责人：</span>
-            <span>制表人：</span>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">单位负责人：</span>
+              <span class="rpt-form-footer-line">{{ signUnitHead }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">会计负责人：</span>
+              <span class="rpt-form-footer-line">{{ signAccountant }}</span>
+            </div>
+            <div class="rpt-form-footer-item">
+              <span class="rpt-form-footer-label">制表人：</span>
+              <span class="rpt-form-footer-line">{{ signPreparer }}</span>
+            </div>
           </div>
         </div>
       </template>
@@ -717,13 +788,36 @@ function printReport() {
 .rpt-form-footer {
   display: flex;
   justify-content: space-between;
+  align-items: flex-end;
   margin-top: 24px;
-  padding: 0 8px;
+  padding: 16px 8px 12px;
   font-size: 13px;
   color: var(--epp-ink-text);
+  border-top: 1px solid var(--epp-line);
+  background: #fafbfc;
+  gap: 20px;
 }
-.rpt-form-footer span {
-  min-width: 140px;
+.rpt-form-footer-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 160px;
+}
+.rpt-form-footer-label {
+  font-size: 12px;
+  color: var(--epp-ink-sub);
+  white-space: nowrap;
+}
+.rpt-form-footer-line {
+  width: 100%;
+  border-bottom: 1px solid var(--epp-ink-text);
+  min-height: 22px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--epp-ink-text);
+  line-height: 22px;
 }
 
 /* ===== 财务表格 ===== */
@@ -812,6 +906,7 @@ function printReport() {
   .finance-table { font-size: 11px; }
   .finance-table thead { position: static; }
   .finance-table tbody tr:hover { background: transparent; }
-  .rpt-form-footer { margin-top: 16px; }
+  .rpt-form-footer { margin-top: 16px; border-top-color: #000; background: transparent; }
+  .rpt-form-footer-line { border-bottom-color: #000; }
 }
 </style>

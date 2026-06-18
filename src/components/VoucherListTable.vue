@@ -117,12 +117,12 @@ function rowClassName({ row }: { row: FinanceVoucher }): string {
       </el-table-column>
 
       <!-- 借方合计（可选） -->
-      <el-table-column v-if="showAmounts" label="借方合计" min-width="110" align="right" show-overflow-tooltip>
+      <el-table-column v-if="showAmounts" label="借方合计" min-width="110" show-overflow-tooltip>
         <template #default="{ row }"><span class="money-text">{{ entryTotal(row, 'debit').toFixed(2) }}</span></template>
       </el-table-column>
 
       <!-- 贷方合计（可选） -->
-      <el-table-column v-if="showAmounts" label="贷方合计" min-width="110" align="right" show-overflow-tooltip>
+      <el-table-column v-if="showAmounts" label="贷方合计" min-width="110" show-overflow-tooltip>
         <template #default="{ row }"><span class="money-text">{{ entryTotal(row, 'credit').toFixed(2) }}</span></template>
       </el-table-column>
 
@@ -142,16 +142,23 @@ function rowClassName({ row }: { row: FinanceVoucher }): string {
   overflow-x: auto;
 }
 
+/* 表头及数据居中 */
+.vlt-wrapper :deep(.el-table th),
+.vlt-wrapper :deep(.el-table td) {
+  text-align: center;
+}
+
 .voucher-id-tag {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  background: #e6f4ff;
-  color: #1677ff;
+  background: #e6f0f8;
+  color: #1677aa;
   font-weight: 600;
   font-size: 12px;
   white-space: nowrap;
 }
+/* 金额保持等宽字体 */
 .money-text {
   font-variant-numeric: tabular-nums;
   font-family: "SF Mono", Consolas, monospace;
@@ -159,11 +166,11 @@ function rowClassName({ row }: { row: FinanceVoucher }): string {
 }
 
 /* 搜索高亮 */
-:deep(.search-highlight-row) {
-  background-color: #d4edda !important;
+::deep(.search-highlight-row) {
+  background-color: #d9eaf5 !important;
 }
-:deep(.search-highlight-row td) {
-  background-color: #d4edda !important;
-  border-color: #b7dfb9 !important;
+::deep(.search-highlight-row td) {
+  background-color: #d9eaf5 !important;
+  border-color: #b8d4e5 !important;
 }
 </style>

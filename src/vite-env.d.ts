@@ -17,6 +17,7 @@ export interface Company {
   id: string;
   name: string;
   contactPerson?: string;
+  legalRepresentative?: string;
   phone?: string;
   address?: string;
   taxNo?: string;

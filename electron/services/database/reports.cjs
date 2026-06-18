@@ -7,6 +7,7 @@
  *   - 数量金额账簿、跨年数据完整性检查
  */
 const { REPORT_TEMPLATES } = require('./schema.cjs');
+const { fillTemplateAmount, classifyCashFlowCategory } = require('../../../shared/report-formulas.cjs');
 
 /**
  * 将报表方法挂载到 FinanceDatabase 原型
@@ -264,7 +265,15 @@ function applyReportMethods(FinanceDatabase) {
       this.getOpeningBalances(yrStart).map(o => [o.subject_code, o])
     );
 
-    const allRows = this._fillTemplateAmount(templateRows, balMap, opMap);
+    // 获取净利润（跨报表引用：所有者权益需包含当期净利润）
+    let netProfit = 0;
+    try {
+      const ps = this.getProfitStatement(cp);
+      const npRow = ps.rows.find(r => r.row_no === 32);
+      if (npRow) netProfit = npRow.amount;
+    } catch (_) {}
+
+    const allRows = this._fillTemplateAmount(templateRows, balMap, opMap, null, { netProfitAmount: netProfit });
     return {
       company_name: book?.company_name || '', period: cp,
       asset_rows: allRows.filter(r => r.section === 'asset'),
@@ -324,11 +333,8 @@ function applyReportMethods(FinanceDatabase) {
       let cat = 'operating';
       for (const c of counter) {
         const subj = self.db.prepare('SELECT category FROM bd_subject WHERE code = ? AND book_id = ?').get(c.subject_code, self.currentBookId);
-        const scat = subj?.category || '';
-        if (scat === 'asset' && (c.subject_code.startsWith('15') || c.subject_code.startsWith('16') || c.subject_code === '1511')) cat = 'investing';
-        else if (scat === 'asset' && (c.subject_code.startsWith('11') || c.subject_code.startsWith('12') || c.subject_code === '1101')) cat = 'investing';
-        else if (scat === 'liability' && (c.subject_code.startsWith('25') || c.subject_code.startsWith('27'))) cat = 'financing';
-        else if (scat === 'equity') cat = 'financing';
+        const result = classifyCashFlowCategory(c.subject_code, subj);
+        if (result !== 'operating') cat = result;
       }
 
       if (cat === 'investing') { if (isInflow) invIn += absFlow; else invOut += absFlow; }
@@ -340,24 +346,35 @@ function applyReportMethods(FinanceDatabase) {
     const totalNet = opNet + invNet + finNet;
 
     const rows = [
+      // === 经营活动 ===
       { row_no:1, name:'一、经营活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'operating', amount:0 },
       { row_no:2, name:'销售商品、提供劳务收到的现金', bold:false, indent_level:0, section:'operating', amount:opIn },
+      { row_no:3, name:'收到其他与经营活动有关的现金', bold:false, indent_level:0, section:'operating', amount:0 },
       { row_no:5, name:'经营活动现金流入小计', is_total:true, bold:true, indent_level:0, section:'operating', amount:opIn },
       { row_no:6, name:'购买商品、接受劳务支付的现金', bold:false, indent_level:0, section:'operating', amount:opOut },
+      { row_no:7, name:'支付给职工以及为职工支付的现金', bold:false, indent_level:0, section:'operating', amount:0 },
+      { row_no:8, name:'支付的各项税费', bold:false, indent_level:0, section:'operating', amount:0 },
+      { row_no:9, name:'支付其他与经营活动有关的现金', bold:false, indent_level:0, section:'operating', amount:0 },
       { row_no:10, name:'经营活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'operating', amount:opOut },
       { row_no:11, name:'经营活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'operating', amount:opNet },
+      // === 投资活动 ===
       { row_no:13, name:'二、投资活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'investing', amount:0 },
-      { row_no:14, name:'处置固定资产、无形资产收回的现金', bold:false, indent_level:0, section:'investing', amount:0 },
+      { row_no:14, name:'收回短期投资、长期债券投资和长期股权投资收到的现金', bold:false, indent_level:0, section:'investing', amount:0 },
+      { row_no:15, name:'取得投资收益收到的现金', bold:false, indent_level:0, section:'investing', amount:0 },
       { row_no:16, name:'投资活动现金流入小计', is_total:true, bold:true, indent_level:0, section:'investing', amount:invIn },
-      { row_no:18, name:'购建固定资产、无形资产支付的现金', bold:false, indent_level:0, section:'investing', amount:invOut },
+      { row_no:18, name:'购建固定资产、无形资产和其他非流动资产支付的现金', bold:false, indent_level:0, section:'investing', amount:invOut },
       { row_no:20, name:'投资活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'investing', amount:invOut },
       { row_no:21, name:'投资活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'investing', amount:invNet },
+      // === 筹资活动 ===
       { row_no:23, name:'三、筹资活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'financing', amount:0 },
-      { row_no:24, name:'取得借款收到的现金', bold:false, indent_level:0, section:'financing', amount:0 },
+      { row_no:24, name:'取得借款收到的现金', bold:false, indent_level:0, section:'financing', amount:finIn },
+      { row_no:25, name:'吸收投资者投资收到的现金', bold:false, indent_level:0, section:'financing', amount:0 },
       { row_no:26, name:'筹资活动现金流入小计', is_total:true, bold:true, indent_level:0, section:'financing', amount:finIn },
-      { row_no:28, name:'偿还债务支付的现金', bold:false, indent_level:0, section:'financing', amount:0 },
+      { row_no:28, name:'偿还借款本金支付的现金', bold:false, indent_level:0, section:'financing', amount:finOut },
+      { row_no:29, name:'分配利润支付的现金', bold:false, indent_level:0, section:'financing', amount:0 },
       { row_no:30, name:'筹资活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'financing', amount:finOut },
       { row_no:31, name:'筹资活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'financing', amount:finNet },
+      // === 汇总 ===
       { row_no:33, name:'四、现金及现金等价物净增加额', is_total:true, bold:true, indent_level:0, section:'summary', amount:totalNet },
     ];
 
@@ -508,108 +525,11 @@ function applyReportMethods(FinanceDatabase) {
 
   /**
    * 根据报表模板填充金额（含公式计算）
+   * 委托给 shared/report-formulas.cjs 统一实现
+   * @param {Object} [opts] 可选参数 { netProfitAmount }
    */
-  proto._fillTemplateAmount = function (templateRows, balanceMap, openingMap, monthlyMap) {
-    const rowMap = new Map();
-    const allRows = [];
-
-    const computeAmt = (codes, map, reportType, section) => {
-      let amt = 0;
-      for (const code of codes) {
-        const bal = map.get(code);
-        if (!bal) continue;
-        if (reportType === 'profit') { amt += Math.abs(bal.balance); }
-        else if (section === 'asset') { amt += bal.balance; }
-        else { amt += -bal.balance; }
-      }
-      return amt;
-    };
-
-    const computeOpening = (codes, map, reportType, section) => {
-      let amt = 0;
-      for (const code of codes) {
-        const op = map.get(code);
-        if (!op) continue;
-        const v = Number(op.debit) - Number(op.credit);
-        if (reportType === 'profit') { amt += Math.abs(v); }
-        else if (section === 'asset') { amt += v; }
-        else { amt += -v; }
-      }
-      return amt;
-    };
-
-    // 第一遍：填充科目金额
-    for (const t of templateRows) {
-      const codes = (t.subject_codes || '').split(',').map(s => s.trim()).filter(Boolean);
-      const row = {
-        row_no: t.row_no, name: t.name,
-        amount: computeAmt(codes, balanceMap, t.report_type, t.section),
-        opening_amount: computeOpening(codes, openingMap, t.report_type, t.section),
-        is_header: !!t.is_header, is_total: !!t.is_total,
-        bold: !!t.bold, indent_level: t.indent_level || 0,
-        section: t.section || '', children: [],
-      };
-      if (monthlyMap) row.monthly_amount = computeAmt(codes, monthlyMap, t.report_type, t.section);
-      rowMap.set(t.row_no, row);
-      allRows.push(row);
-    }
-
-    // 第二遍：计算公式汇总
-    const getVal = (r, field) => (r ? (field === 'monthly_amount' ? (r.monthly_amount ?? r.amount) : r.amount) : 0);
-    const isProfit = templateRows.length > 0 && templateRows[0].report_type === 'profit';
-    const hasMonthly = monthlyMap != null;
-    const fields = hasMonthly ? ['amount', 'monthly_amount'] : ['amount'];
-    let netProfitRow;
-
-    if (isProfit) {
-      const bpRow = rowMap.get(21);
-      fields.forEach(f => {
-        if (bpRow) bpRow[f] = getVal(rowMap.get(1), f) - getVal(rowMap.get(2), f) - getVal(rowMap.get(3), f)
-          - getVal(rowMap.get(11), f) - getVal(rowMap.get(14), f) - getVal(rowMap.get(18), f)
-          + getVal(rowMap.get(20), f);
-      });
-
-      const tpRow = rowMap.get(30);
-      fields.forEach(f => {
-        if (tpRow) tpRow[f] = getVal(bpRow, f) + getVal(rowMap.get(22), f) - getVal(rowMap.get(24), f);
-      });
-
-      netProfitRow = rowMap.get(32);
-      fields.forEach(f => {
-        if (netProfitRow) netProfitRow[f] = getVal(tpRow, f) - getVal(rowMap.get(31), f);
-      });
-    }
-
-    // 资产负债表公式
-    const asRow = rowMap.get(21); // 固定资产账面价值
-    if (asRow) asRow.amount = (rowMap.get(19)?.amount || 0) - (rowMap.get(20)?.amount || 0);
-
-    const caTotal = rowMap.get(15); // 流动资产合计
-    if (caTotal) caTotal.amount = [2,3,4,5,6,7,8,9,10].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-    const ncaTotal = rowMap.get(29); // 非流动资产合计
-    if (ncaTotal) ncaTotal.amount = [17,18,21,25,28].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-    const atTotal = rowMap.get(30); // 资产总计
-    if (atTotal) atTotal.amount = (caTotal?.amount || 0) + (ncaTotal?.amount || 0);
-
-    const clTotal = rowMap.get(41); // 流动负债合计
-    if (clTotal) clTotal.amount = [32,34,36,37,40].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-    const nclTotal = rowMap.get(46); // 非流动负债合计
-    const liabTotal = rowMap.get(47); // 负债合计
-    if (liabTotal) liabTotal.amount = (clTotal?.amount || 0) + (nclTotal?.amount || 0);
-
-    const eqTotal = rowMap.get(53); // 所有者权益合计
-    if (eqTotal) {
-      eqTotal.amount = [49,50,51,52].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-      eqTotal.amount += netProfitRow?.amount || 0;
-    }
-
-    const totalRow = rowMap.get(54); // 负债和所有者权益总计
-    if (totalRow) totalRow.amount = (liabTotal?.amount || 0) + (eqTotal?.amount || 0);
-
-    return allRows;
+  proto._fillTemplateAmount = function (templateRows, balanceMap, openingMap, monthlyMap, opts) {
+    return fillTemplateAmount(templateRows, balanceMap, openingMap, monthlyMap, opts);
   };
 
   /**

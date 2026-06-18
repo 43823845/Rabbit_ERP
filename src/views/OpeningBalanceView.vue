@@ -496,9 +496,27 @@ onMounted(loadData);
 .panel :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-tr-bg-color: #fafbfc;
+  --el-table-row-hover-bg-color: #f3f6f9;
 }
 
+/* 默认行底色 */
+.panel :deep(.el-table__body tr) {
+  background-color: #fafbfc;
+}
+.panel :deep(.el-table__body tr:hover > td) {
+  background-color: #f3f6f9 !important;
+  border-bottom-color: var(--epp-line-light) !important;
+}
+
+/* 当前行激活/选中 */
+.panel :deep(.el-table__body tr.current-row) {
+  background-color: #e8f0f8 !important;
+}
+.panel :deep(.el-table__body tr.current-row > td) {
+  background-color: #e8f0f8 !important;
+  border-bottom-color: var(--epp-line-light) !important;
+}
 
 /* ===== 分类标签卡 ===== */
 .op-tabs { margin-top: -4px; }

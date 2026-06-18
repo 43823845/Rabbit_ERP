@@ -4,7 +4,7 @@
  *
  * 职责：全局布局（侧栏导航 + 顶栏 + 主内容区）、公司切换、Electron 无边框窗口控制
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Timer, Grid, Setting, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
@@ -27,11 +27,43 @@ const isElectron = typeof window !== 'undefined' && !!(window as any).electronAP
 function winMin() { isElectron && (window as any).electronAPI.windowMin(); }
 function winMax() { isElectron && (window as any).electronAPI.windowMax(); }
 
+/* ---- 系统状态指示器 ---- */
+const now = ref(new Date());
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+let statusTimer: ReturnType<typeof setInterval> | null = null;
+const dbConnected = ref<boolean | null>(null); // null=检测中, true=已连接, false=异常
+
+async function checkDbStatus() {
+  try {
+    await api.getDatabaseInfo();
+    dbConnected.value = true;
+  } catch {
+    dbConnected.value = false;
+  }
+}
+
+onMounted(() => {
+  clockTimer = setInterval(() => { now.value = new Date(); }, 1000);
+  checkDbStatus();
+  statusTimer = setInterval(checkDbStatus, 30000);
+});
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer);
+  if (statusTimer) clearInterval(statusTimer);
+});
+
+const timeStr = computed(() => {
+  const d = now.value;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+});
+
 /* 是否处于登录页面 —— 登录页不展示侧栏和顶栏 */
 const isLoginPage = computed(() => route.path === '/login');
 
 const menuItems = [
-  { key: '/dashboard', label: '工作台', icon: HomeFilled },
+  { key: '/dashboard', label: '仪表盘', icon: HomeFilled },
   { key: '/voucher',   label: '凭证',   icon: Document },
   { key: '/ledger',    label: '账簿',   icon: Notebook },
   { key: '/reports',   label: '报表',   icon: DataAnalysis },
@@ -49,8 +81,21 @@ function handleMenuClick(key: string) {
   }
 }
 
+const companiesCache = ref<Company[]>([]);
+const companiesLoaded = ref(false);
+
 async function loadCompanies() {
+  if (!companiesLoaded.value) {
+    companies.value = await api.getCompanies();
+    companiesCache.value = companies.value;
+    companiesLoaded.value = true;
+  }
+}
+
+async function refreshCompanies() {
   companies.value = await api.getCompanies();
+  companiesCache.value = companies.value;
+  companiesLoaded.value = true;
 }
 
 async function handleSwitchCompany(companyId: string) {
@@ -60,7 +105,7 @@ async function handleSwitchCompany(companyId: string) {
     auth.state.user.companyId = companyId;
     auth.state.user.companyName = c?.name || '';
   }
-  routerViewKey.value++; // 触发 router-view 重新挂载，刷新数据
+  routerViewKey.value++;
   ElMessage.success(`已切换到「${c?.name}」`);
 }
 
@@ -87,10 +132,24 @@ function handleUserCmd(cmd: string) {
       <div class="topbar-left">
         <AppIcon :size="28" class="brand-icon" />
         <span class="brand-text">{{ APP_CONFIG.productName }}</span>
+        <span class="brand-version">v{{ APP_CONFIG.version }}</span>
         <span class="topbar-divider">|</span>
         <span class="topbar-title">{{ currentTitle }}</span>
       </div>
       <div class="topbar-right" v-if="auth.state.loggedIn">
+        <!-- 系统状态指示器 -->
+        <span class="topbar-status">
+          <span class="topbar-status-dot" :class="isElectron ? 'online' : 'mock'" :title="isElectron ? 'Electron 桌面端' : '浏览器开发模式'"></span>
+          服务器
+        </span>
+        <span class="topbar-divider">|</span>
+        <span class="topbar-status">
+          <span class="topbar-status-dot" :class="dbConnected === true ? 'online' : dbConnected === false ? 'offline' : 'checking'" :title="dbConnected === true ? '数据库已连接' : dbConnected === false ? '数据库连接异常' : '检测中...'"></span>
+          数据库
+        </span>
+        <span class="topbar-divider">|</span>
+        <span class="topbar-clock" :title="timeStr">{{ timeStr }}</span>
+        <span class="topbar-divider">|</span>
         <span class="topbar-company-label">当前账套：{{ auth.state.user?.companyName || '未选择' }}</span>
         <el-dropdown @command="handleSwitchCompany" trigger="click" class="mx-1">
           <span class="topbar-link" @click="loadCompanies">
@@ -199,12 +258,42 @@ html, body, #app { margin: 0; padding: 0; width: 100%; height: 100%; }
   width: 26px; height: 26px; border-radius: 4px; flex-shrink: 0;
 }
 .brand-text { font-size: 15px; font-weight: 700; color: #f0ede6; letter-spacing: 1px; }
+.brand-version {
+  font-size: 10px; color: rgba(255,255,255,.35); font-weight: 400;
+  background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 3px; margin-left: 2px;
+}
 .topbar-divider { color: rgba(255,255,255,.15); font-size: 17px; user-select: none; }
 .topbar-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,.8); margin: 0; }
 .topbar-right { display: flex; align-items: center; gap: 4px; }
 .topbar-company-label {
   color: rgba(255,255,255,.6); font-size: 12px; margin-right: 4px;
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 系统状态指示器 */
+.topbar-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: rgba(255,255,255,.55); font-size: 11px;
+  padding: 2px 8px; margin: 0 2px;
+  border-radius: 3px; background: rgba(255,255,255,.05);
+  white-space: nowrap;
+}
+.topbar-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.topbar-status-dot.online  { background: #10b981; box-shadow: 0 0 4px rgba(16,185,129,.5); }
+.topbar-status-dot.offline { background: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,.5); }
+.topbar-status-dot.mock   { background: #f59e0b; box-shadow: 0 0 4px rgba(245,158,11,.5); }
+.topbar-status-dot.checking { background: #94a3b8; animation: pulse-dot 1.2s infinite; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}
+/* 系统时钟 */
+.topbar-clock {
+  color: rgba(255,255,255,.7); font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  padding: 2px 10px; margin-left: 2px;
+  border-radius: 3px; background: rgba(255,255,255,.06);
+  white-space: nowrap; letter-spacing: 0.5px;
 }
 .topbar-link {
   color: rgba(255,255,255,.7); font-size: 12px; cursor: pointer;

@@ -144,7 +144,7 @@ export function useAttachments(
       );
       if (pendingIdx >= 0) pendingFiles.value.splice(pendingIdx, 1);
     } else {
-      try { await api.deleteAttachment(att.id); } catch (_) { /* 忽略错误 */ }
+      try { await api.deleteAttachment(att.id); } catch (e) { console.warn('[useAttachments] 删除附件失败:', e); }
       savedAttachments.value = savedAttachments.value.filter(a => a.id !== att.id);
     }
   }
@@ -216,7 +216,7 @@ export function useAttachments(
     try {
       const result = await api.readAttachmentFile(attId);
       if (result?.data_url) previewMap.value[attId] = result.data_url;
-    } catch (_) { /* 忽略错误 */ }
+    } catch (e) { console.warn('[useAttachments] 加载附件预览失败:', e); }
     previewLoading.value[attId] = false;
   }
 
@@ -241,7 +241,7 @@ export function useAttachments(
         <div class="preview-bar"><span class="preview-close" title="关闭 (Esc)">×</span></div>
         <div class="preview-img-wrap"><img src="${dataUrl}" /></div>
       `;
-      const close = () => { try { w.close(); } catch (_) { /* 忽略错误 */ } };
+      const close = () => { try { w.close(); } catch (e) { console.warn('[useAttachments] 关闭预览窗口失败:', e); } };
       w.document.querySelector('.preview-close')?.addEventListener('click', close);
       w.document.querySelector('.preview-img-wrap')?.addEventListener('click', close);
       w.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });

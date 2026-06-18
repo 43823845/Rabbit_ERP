@@ -13,7 +13,7 @@ import {
 } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import { useAuth } from '../auth';
-import type { Company, SysUser, VoucherWordType, VoucherWordPayload, DatabaseInfo } from '../api';
+import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo } from '../api';
 
 const api = getFinanceApi();
 const auth = useAuth();
@@ -24,7 +24,7 @@ const loading = ref(false);
 const activeMenu = ref('company');
 
 /** 导航菜单定义 */
-interface NavItem { key: string; label: string; icon: any; adminOnly?: boolean }
+interface NavItem { key: string; label: string; icon: typeof OfficeBuilding; adminOnly?: boolean }
 interface NavGroup { label: string; items: NavItem[] }
 const navGroups: NavGroup[] = [
   {
@@ -54,7 +54,7 @@ const subjectsCount = ref(0);
 
 const currentUser = computed(() => auth.state.user);
 const isAdmin = computed(() => currentUser.value?.role === 'admin');
-const isElectron = computed(() => !!(window as any).electronAPI);
+const isElectron = computed(() => !!(window as Window & { electronAPI?: unknown }).electronAPI);
 
 const roleLabel = computed(() => {
   const map: Record<string, string> = {
@@ -101,12 +101,13 @@ function buildYearPeriods(currentPeriod: string, existing: Array<{ period: strin
 
 /* ---- 公司信息编辑（使用 reactive 确保 v-model 正常） ---- */
 const editingCompany = ref(false);
-const companyForm = reactive({ contactPerson: '', phone: '', address: '', taxNo: '' });
+const companyForm = reactive({ contactPerson: '', legalRepresentative: '', phone: '', address: '', taxNo: '' });
 const savingCompany = ref(false);
 
 function startEditCompany() {
   if (!company.value) return;
   companyForm.contactPerson = company.value.contactPerson || '';
+  companyForm.legalRepresentative = company.value.legalRepresentative || '';
   companyForm.phone = company.value.phone || '';
   companyForm.address = company.value.address || '';
   companyForm.taxNo = company.value.taxNo || '';
@@ -131,7 +132,7 @@ async function saveCompany() {
     company.value = updated;
     editingCompany.value = false;
     ElMessage.success('公司信息已更新');
-  } catch (e: any) { ElMessage.error(e?.message || '保存失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '保存失败'); }
   finally { savingCompany.value = false; }
 }
 
@@ -157,7 +158,7 @@ async function saveRenameAccount(c: Company) {
     if (company.value?.id === c.id) company.value.name = editingAccountName.value;
     editingAccountId.value = null;
     ElMessage.success('账套已重命名');
-  } catch (e: any) { ElMessage.error(e?.message || '重命名失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '重命名失败'); }
 }
 
 function openDeleteConfirm(c: Company) {
@@ -176,13 +177,13 @@ async function confirmDeleteCompany() {
     companies.value = companies.value.filter(x => x.id !== deleteTarget.value!.id);
     ElMessage.success('账套已删除');
     deleteConfirmOpen.value = false;
-  } catch (e: any) { ElMessage.error(e?.message || '删除失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '删除失败'); }
 }
 
 /* ---- 用户管理 ---- */
 interface UserDialogState {
   open: boolean; mode: 'create' | 'edit';
-  id?: number; username: string; alias: string; role: string; password: string;
+  id?: number; username: string; alias: string; role: UserRole; password: string;
 }
 const userDialog = reactive<UserDialogState>({ open: false, mode: 'create', username: '', alias: '', role: 'accountant', password: '' });
 const savingUser = ref(false);
@@ -205,18 +206,18 @@ async function saveUser() {
       }
       await api.createUser({
         username: userDialog.username, password: userDialog.password,
-        alias: userDialog.alias, role: userDialog.role as any,
+        alias: userDialog.alias, role: userDialog.role,
       });
       ElMessage.success('用户已创建');
     } else {
       await api.updateUser(userDialog.id!, {
-        alias: userDialog.alias, role: userDialog.role as any,
+        alias: userDialog.alias, role: userDialog.role,
       });
       ElMessage.success('用户信息已更新');
     }
     userDialog.open = false;
     users.value = await api.listUsers();
-  } catch (e: any) { ElMessage.error(e?.message || '操作失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
   finally { savingUser.value = false; }
 }
 
@@ -230,7 +231,7 @@ async function handleToggleUser(u: SysUser) {
     await api.updateUser(u.id, { enabled: u.enabled ? 0 : 1 });
     users.value = await api.listUsers();
     ElMessage.success(u.enabled ? '用户已禁用' : '用户已启用');
-  } catch (e: any) { ElMessage.error(e?.message || '操作失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
 }
 
 /* ---- 修改密码 ---- */
@@ -341,7 +342,7 @@ async function saveVoucherWord() {
     }
     vwDialog.open = false;
     await loadVoucherWords();
-  } catch (e: any) { ElMessage.error(e?.message || '操作失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
   finally { savingVw.value = false; }
 }
 
@@ -369,7 +370,7 @@ const exporting = ref(false);
 async function loadDbInfo() {
   dbLoading.value = true;
   try { dbInfo.value = await api.getDatabaseInfo(); }
-  catch (e: any) { ElMessage.error(e?.message || '获取数据库信息失败'); }
+  catch (e: unknown) { ElMessage.error((e as Error)?.message || '获取数据库信息失败'); }
   finally { dbLoading.value = false; }
 }
 
@@ -388,7 +389,7 @@ async function handleVacuum() {
       : '';
     ElMessage.success(`数据库整理完成${saved ? '，' + saved : ''}`);
     await loadDbInfo();
-  } catch (e: any) { ElMessage.error(e?.message || '整理失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '整理失败'); }
   finally { vacuuming.value = false; }
 }
 
@@ -399,7 +400,7 @@ async function handleBackup() {
     if (res.canceled) { backingUp.value = false; return; }
     if (res.__error) { ElMessage.error(res.__error); backingUp.value = false; return; }
     ElMessage.success(res.path ? `数据库已备份至 ${res.path}` : '数据库已备份');
-  } catch (e: any) { ElMessage.error(e?.message || '备份失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '备份失败'); }
   finally { backingUp.value = false; }
 }
 
@@ -410,7 +411,7 @@ async function handleExportJson() {
     if (res.canceled) { exporting.value = false; return; }
     if (res.__error) { ElMessage.error(res.__error); exporting.value = false; return; }
     ElMessage.success(res.path ? `数据已导出至 ${res.path}` : '数据已导出');
-  } catch (e: any) { ElMessage.error(e?.message || '导出失败'); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '导出失败'); }
   finally { exporting.value = false; }
 }
 
@@ -483,7 +484,7 @@ function formatFileSize(bytes: number): string {
                 </template>
               </div>
             </div>
-            <div v-if="!editingCompany" class="sp-bc-body">
+              <div v-if="!editingCompany" class="sp-bc-body">
               <div class="sp-kv-section"><div class="sp-kv-section-title">基本信息</div>
                 <div class="sp-kv-row"><span class="sp-kv-label">账套名称</span><span class="sp-kv-value sp-kv-value--strong">{{ company?.name || '—' }}</span></div>
                 <div class="sp-kv-row"><span class="sp-kv-label">当前期间</span><span class="sp-kv-value"><el-tag size="small" effect="plain" type="primary">{{ company?.period || '—' }}</el-tag></span></div>
@@ -491,6 +492,7 @@ function formatFileSize(bytes: number): string {
               </div>
               <div class="sp-kv-section"><div class="sp-kv-section-title">联系方式</div>
                 <div class="sp-kv-row"><span class="sp-kv-label">联系人</span><span class="sp-kv-value">{{ company?.contactPerson || '—' }}</span></div>
+                <div class="sp-kv-row"><span class="sp-kv-label">企业法人</span><span class="sp-kv-value">{{ company?.legalRepresentative || '—' }}</span></div>
                 <div class="sp-kv-row"><span class="sp-kv-label">电话</span><span class="sp-kv-value">{{ company?.phone || '—' }}</span></div>
               </div>
               <div class="sp-kv-section"><div class="sp-kv-section-title">其他信息</div>
@@ -503,8 +505,9 @@ function formatFileSize(bytes: number): string {
                 <el-form-item label="账套名称"><el-input :model-value="company?.name" disabled /></el-form-item>
                 <div class="sp-form-row">
                   <el-form-item label="联系人"><el-input v-model="companyForm.contactPerson" placeholder="联系人姓名" /></el-form-item>
-                  <el-form-item label="电话"><el-input v-model="companyForm.phone" placeholder="联系电话" /></el-form-item>
+                  <el-form-item label="企业法人"><el-input v-model="companyForm.legalRepresentative" placeholder="企业法人姓名" /></el-form-item>
                 </div>
+                <el-form-item label="电话"><el-input v-model="companyForm.phone" placeholder="联系电话" /></el-form-item>
                 <el-form-item label="地址"><el-input v-model="companyForm.address" placeholder="公司地址" /></el-form-item>
                 <el-form-item label="税号"><el-input v-model="companyForm.taxNo" placeholder="纳税人识别号（18位）" maxlength="18" /></el-form-item>
               </el-form>
@@ -559,6 +562,7 @@ function formatFileSize(bytes: number): string {
                     <div class="ck-detail">
                       <span>期间 {{ row.period || '—' }}</span>
                       <span v-if="row.contactPerson">· 联系人 {{ row.contactPerson }}</span>
+                      <span v-if="row.legalRepresentative">· 法人 {{ row.legalRepresentative }}</span>
                       <span class="ck-detail-text">· {{ row.createdAt?.slice(0,10) || '' }}</span>
                     </div>
                   </template>
@@ -643,7 +647,7 @@ function formatFileSize(bytes: number): string {
                   </div>
                   <div class="ck-detail">
                     <el-tag size="small" :type="row.role==='admin'?'danger':row.role==='auditor'?'warning':'info'">
-                      {{ ({admin:'管理员',accountant:'会计',auditor:'审计员',viewer:'查看者'} as any)[row.role]||row.role }}
+                      {{ ({admin:'管理员',accountant:'会计',auditor:'审计员',viewer:'查看者'} as Record<string, string>)[row.role]||row.role }}
                     </el-tag>
                     <span class="ck-detail-text">{{ row.createdAt?.slice(0,10) || '' }}</span>
                   </div>

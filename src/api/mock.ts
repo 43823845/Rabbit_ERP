@@ -18,6 +18,12 @@ import type {
   MultiColumnScheme, MultiColumnLedgerResult, MultiColumnLedgerRow, MultiColumnSchemePayload, MultiColumnLedgerSummary,
 } from '../vite-env';
 
+// 共享报表模板与公式（CJS 模块，Vite 自动转换）
+// @ts-ignore - CJS module
+import { getTemplatesByType } from '../../shared/report-templates.cjs';
+// @ts-ignore - CJS module
+import { fillTemplateAmount, classifyCashFlowCategory } from '../../shared/report-formulas.cjs';
+
 function getBuiltinSubjects(): FinanceSubject[] {
   return [
     // ========== 资产类 ==========
@@ -157,7 +163,7 @@ export class MockFinanceApi implements FinanceApi {
         const parsed = JSON.parse(last);
         this.companyId = parsed.companyId;
         this.loadStore();
-      } catch { this.companyId = null; }
+      } catch (e) { console.warn('[MockApi] 解析上次公司信息失败:', e); this.companyId = null; }
     }
   }
 
@@ -185,7 +191,7 @@ export class MockFinanceApi implements FinanceApi {
           voucherWords: parsed.voucherWords || [],
         };
         return;
-      } catch { /* ignore */ }
+      } catch (e) { console.warn('[MockApi] 解析持久化数据失败:', e); }
     }
     const companies = this.getCompaniesSync();
     const c = companies.find(x => x.id === this.companyId);
@@ -229,7 +235,7 @@ export class MockFinanceApi implements FinanceApi {
 
   private getCompaniesSync(): Company[] {
     try { return JSON.parse(localStorage.getItem('finance_company_list') || '[]'); }
-    catch { return []; }
+    catch (e) { console.warn('[MockApi] 解析公司列表失败:', e); return []; }
   }
 
   private saveCompanies(list: Company[]) {
@@ -255,7 +261,7 @@ export class MockFinanceApi implements FinanceApi {
 
   private getUsersSync(): any[] {
     try { return JSON.parse(localStorage.getItem('finance_users') || '[]'); }
-    catch { return []; }
+    catch (e) { console.warn('[MockApi] 解析用户列表失败:', e); return []; }
   }
 
   private saveUsers(list: any[]) {
@@ -319,7 +325,7 @@ export class MockFinanceApi implements FinanceApi {
     try {
       const raw = localStorage.getItem('finance_auth_state');
       if (raw) { const state = JSON.parse(raw); return state.user?.userId || null; }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn('[MockApi] 读取缓存用户ID失败:', e); }
     return null;
   }
 
@@ -985,7 +991,7 @@ export class MockFinanceApi implements FinanceApi {
 
   async getMultiColumnLedger(f?: { parentCode?: string; period?: string; startDate?: string; endDate?: string; childrenJson?: string }): Promise<MultiColumnLedgerResult> {
     let children: { code: string; name: string }[] = [];
-    try { children = JSON.parse(f?.childrenJson || '[]'); } catch (_) {}
+    try { children = JSON.parse(f?.childrenJson || '[]'); } catch (e) { console.warn('[MockApi] 解析多栏账子科目JSON失败:', e); }
     if (children.length === 0) return { columns: [], rows: [], periodSummary: [] };
 
     const columns = children.map(c => ({ code: c.code, name: c.name }));
@@ -1174,32 +1180,13 @@ export class MockFinanceApi implements FinanceApi {
   }
 
   /* ---- 报表模板（利润表/资产负债表） ---- */
-  private _profitTemplate(): Omit<ProfitStatementRow, 'amount' | 'monthly_amount' | 'opening_amount'>[] {
-    return [
-      { row_no:1, name:'一、营业收入', is_header:true, is_total:false, bold:true, indent_level:0 },
-      { row_no:2, name:'减：营业成本', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:3, name:'税金及附加', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:11, name:'销售费用', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:14, name:'管理费用', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:16, name:'业务招待费', is_header:false, is_total:false, bold:false, indent_level:1 },
-      { row_no:18, name:'财务费用', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:19, name:'其中：利息费用', is_header:false, is_total:false, bold:false, indent_level:1 },
-      { row_no:20, name:'加：投资收益', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:21, name:'二、营业利润', is_header:false, is_total:true, bold:true, indent_level:0 },
-      { row_no:22, name:'加：营业外收入', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:24, name:'减：营业外支出', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:30, name:'三、利润总额', is_header:false, is_total:true, bold:true, indent_level:0 },
-      { row_no:31, name:'减：所得税费用', is_header:false, is_total:false, bold:false, indent_level:0 },
-      { row_no:32, name:'四、净利润', is_header:false, is_total:true, bold:true, indent_level:0 },
-    ];
-  }
 
   async getProfitStatement(period: string): Promise<ProfitStatement> {
     const bm = new Map<string, SubjectBalance>();
     const yearNum = parseInt(period.substring(0, 4));
     const monthNum = parseInt(period.substring(5, 7));
 
-    // 本年累计：按月累加发生额，期初只取一次，余额逐月末重算
+    // 本年累计：按月累加发生额
     for (let m = 1; m <= monthNum; m++) {
       const mp = yearNum + '-' + String(m).padStart(2, '0');
       const monthBalances = await this.getSubjectBalance({ period: mp });
@@ -1210,7 +1197,6 @@ export class MockFinanceApi implements FinanceApi {
         } else {
           prev.debitAmount += b.debitAmount;
           prev.creditAmount += b.creditAmount;
-          // 不重复累加 openingDebit/openingCredit/balance
         }
       });
     }
@@ -1224,66 +1210,23 @@ export class MockFinanceApi implements FinanceApi {
       }
     }
 
-    // 本月金额：仅查询当前月
+    // 本月金额
     const monthlyBalances = await this.getSubjectBalance({ period });
     const mm = new Map<string, SubjectBalance>();
     monthlyBalances.forEach(b => mm.set(b.code, b));
 
-    // 累计金额计算函数
-    const subjBal = (codes: string[]) => codes.reduce((s, c) => s + Math.abs((bm.get(c)?.balance) || 0), 0);
-    // 本月金额计算函数
-    const subjBalMonthly = (codes: string[]) => codes.reduce((s, c) => s + Math.abs((mm.get(c)?.balance) || 0), 0);
+    // 年初余额
+    const yrStart = period.substring(0, 4) + '-01';
+    const opMap = new Map<string, { debit: number; credit: number }>();
+    try {
+      const openings = await this.getOpeningBalances(yrStart);
+      openings.forEach(o => opMap.set(o.subject_code, { debit: o.debit, credit: o.credit }));
+    } catch (e) { console.warn('[MockApi] 获取利润表期初余额失败:', e); }
 
-    // 累计金额
-    const v1 = subjBal(['6001']);
-    const v2 = subjBal(['6401', '6402']);
-    const v3 = subjBal(['6403']);
-    const v11 = subjBal(['6601']);
-    const v14 = subjBal(['6602']);
-    const v16 = subjBal(['660201']);
-    const v18 = subjBal(['6603']);
-    const v19 = subjBal(['660302']);
-    const v20 = subjBal(['6111']);
-    const bizProfit = v1 - v2 - v3 - v11 - v14 - v18 + v20;
-    const v22 = subjBal(['6301']);
-    const v24 = subjBal(['6711']);
-    const totalProfit = bizProfit + v22 - v24;
-    const v31 = subjBal(['6801']);
-    const netProfit = totalProfit - v31;
-
-    // 本月金额
-    const mv1 = subjBalMonthly(['6001']);
-    const mv2 = subjBalMonthly(['6401', '6402']);
-    const mv3 = subjBalMonthly(['6403']);
-    const mv11 = subjBalMonthly(['6601']);
-    const mv14 = subjBalMonthly(['6602']);
-    const mv16 = subjBalMonthly(['660201']);
-    const mv18 = subjBalMonthly(['6603']);
-    const mv19 = subjBalMonthly(['660302']);
-    const mv20 = subjBalMonthly(['6111']);
-    const mBizProfit = mv1 - mv2 - mv3 - mv11 - mv14 - mv18 + mv20;
-    const mv22 = subjBalMonthly(['6301']);
-    const mv24 = subjBalMonthly(['6711']);
-    const mTotalProfit = mBizProfit + mv22 - mv24;
-    const mv31 = subjBalMonthly(['6801']);
-    const mNetProfit = mTotalProfit - mv31;
-
-    const amountMap: Record<number, number> = {
-      1: v1, 2: v2, 3: v3, 11: v11, 14: v14, 16: v16, 18: v18, 19: v19, 20: v20,
-      21: bizProfit, 22: v22, 24: v24, 30: totalProfit, 31: v31, 32: netProfit,
-    };
-    const monthlyMap: Record<number, number> = {
-      1: mv1, 2: mv2, 3: mv3, 11: mv11, 14: mv14, 16: mv16, 18: mv18, 19: mv19, 20: mv20,
-      21: mBizProfit, 22: mv22, 24: mv24, 30: mTotalProfit, 31: mv31, 32: mNetProfit,
-    };
-
-    const rows = this._profitTemplate().map(t => ({
-      ...t,
-      amount: amountMap[t.row_no] || 0,
-      monthly_amount: monthlyMap[t.row_no] || 0,
-      opening_amount: 0,
-    }));
-    return { company_name: '', period, rows };
+    // 使用共享公式填充
+    const profitTemplates = getTemplatesByType('profit');
+    const rows = fillTemplateAmount(profitTemplates, bm, opMap, mm);
+    return { company_name: '', period, rows: rows as ProfitStatementRow[] };
   }
 
   async getBalanceSheet(period: string): Promise<BalanceSheet> {
@@ -1303,102 +1246,38 @@ export class MockFinanceApi implements FinanceApi {
         } else {
           prev.debitAmount += b.debitAmount;
           prev.creditAmount += b.creditAmount;
-          prev.balance += b.balance;
+          // 余额逐月末重算（不逐月累加，由最后一期决定）
         }
       });
     }
-    const om = new Map<string, number>();
+    // 按科目方向重新计算余额
+    for (const [, item] of bm) {
+      const dir = this.store.subjects.find(s => s.code === item.code)?.direction;
+      if (dir === 'debit') {
+        item.balance = item.openingDebit - item.openingCredit + item.debitAmount - item.creditAmount;
+      } else {
+        item.balance = item.openingCredit - item.openingDebit + item.creditAmount - item.debitAmount;
+      }
+    }
+
+    const opMap = new Map<string, { debit: number; credit: number }>();
     try {
       const openings = await this.getOpeningBalances(yearStart);
-      openings.forEach(o => om.set(o.subject_code, Number(o.debit) - Number(o.credit)));
-    } catch (_) {}
+      openings.forEach(o => opMap.set(o.subject_code, { debit: o.debit, credit: o.credit }));
+    } catch (e) { console.warn('[MockApi] 获取资产负债表期初余额失败:', e); }
 
-    const subjBal = (codes: string[], sign: number) => codes.reduce((s, c) => s + sign * ((bm.get(c)?.balance) || 0), 0);
-    const subjOp = (codes: string[], sign: number) => codes.reduce((s, c) => s + sign * (om.get(c) || 0), 0);
-
-    const a2 = subjBal(['1001', '1002'], 1);
-    const a5 = subjBal(['1122'], 1);
-    const a9 = subjBal(['1221'], 1);
-    const a10 = subjBal(['1405'], 1);
-    const a17 = subjBal(['1511'], 1);
-    const a19 = subjBal(['1601'], 1);
-    const a20 = subjBal(['1602'], 1);
-    const a25 = subjBal(['1701'], 1);
-    const a28 = subjBal(['1801'], 1);
-    const a21 = a19 - a20;       // 固定资产账面价值
-    const caTotal = a2 + a5 + a9 + a10;
-    const ncaTotal = a17 + a21 + a25 + a28;
-    const aTotal = caTotal + ncaTotal;
-
-    const l32 = subjBal(['2001'], -1);
-    const l34 = subjBal(['2202'], -1);
-    const l36 = subjBal(['2211'], -1);
-    const l37 = subjBal(['2221'], -1);
-    const l40 = subjBal(['2241'], -1);
-    const clTotal = l32 + l34 + l36 + l37 + l40;
-    const nclTotal = 0;
-    const lTotal = clTotal + nclTotal;
-
-    const e49 = subjBal(['4001'], -1);
-    const e50 = subjBal(['4002'], -1);
-    const e51 = subjBal(['4101'], -1);
-    const e52 = subjBal(['4104'], -1);
+    // 获取净利润（跨报表引用）
     const netProfit = (await this.getProfitStatement(period)).rows.find(r => r.row_no === 32)?.amount || 0;
-    const eTotal = e49 + e50 + e51 + e52 + netProfit;
 
-    // 年初余额
-    const oa2 = subjOp(['1001', '1002'], 1);
-    const oa5 = subjOp(['1122'], 1);
-    const oa9 = subjOp(['1221'], 1);
-    const oa10 = subjOp(['1405'], 1);
-    const ocTotal = oa2 + oa5 + oa9 + oa10;
-
-    const makeRow = (row_no: number, name: string, amount: number, opening=0, is_header=false, is_total=false, bold=false, indent=0): BalanceSheetRow =>
-      ({ row_no, name, amount, opening_amount: opening, is_header, is_total, bold, indent_level: indent });
+    // 使用共享公式填充
+    const balanceTemplates = getTemplatesByType('balance');
+    const allRows = fillTemplateAmount(balanceTemplates, bm, opMap, null, { netProfitAmount: netProfit });
 
     return {
       company_name: '', period,
-      asset_rows: [
-        makeRow(1, '流动资产：', 0, 0, true, false, true),
-        makeRow(2, '货币资金', a2, oa2),
-        makeRow(3, '短期投资', 0, 0),
-        makeRow(4, '应收票据', 0, 0),
-        makeRow(5, '应收账款', a5, oa5),
-        makeRow(6, '预付账款', 0, 0),
-        makeRow(9, '其他应收款', a9, 0),
-        makeRow(10, '存货', a10, oa10),
-        makeRow(15, '流动资产合计', caTotal, ocTotal, false, true, true),
-        makeRow(16, '非流动资产：', 0, 0, true, false, true),
-        makeRow(17, '长期债券投资', 0, 0),
-        makeRow(18, '长期股权投资', a17, 0),
-        makeRow(19, '固定资产原价', a19, 0),
-        makeRow(20, '减：累计折旧', a20, 0),
-        makeRow(21, '固定资产账面价值', a21, 0, false, true, true),
-        makeRow(25, '无形资产', a25, 0),
-        makeRow(28, '长期待摊费用', a28, 0),
-        makeRow(29, '非流动资产合计', ncaTotal, 0, false, true, true),
-        makeRow(30, '资产总计', aTotal, 0, false, true, true),
-      ],
-      liability_rows: [
-        makeRow(31, '流动负债：', 0, 0, true, false, true),
-        makeRow(32, '短期借款', l32, 0),
-        makeRow(34, '应付账款', l34, 0),
-        makeRow(36, '应付职工薪酬', l36, 0),
-        makeRow(37, '应交税费', l37, 0),
-        makeRow(40, '其他应付款', l40, 0),
-        makeRow(41, '流动负债合计', clTotal, 0, false, true, true),
-        makeRow(46, '非流动负债合计', nclTotal, 0, false, true, true),
-        makeRow(47, '负债合计', lTotal, 0, false, true, true),
-      ],
-      equity_rows: [
-        makeRow(48, '所有者权益：', 0, 0, true, false, true),
-        makeRow(49, '实收资本（或股本）', e49, 0),
-        makeRow(50, '资本公积', e50, 0),
-        makeRow(51, '盈余公积', e51, 0),
-        makeRow(52, '未分配利润', e52, 0),
-        makeRow(53, '所有者权益合计', eTotal, 0, false, true, true),
-        makeRow(54, '负债和所有者权益总计', lTotal + eTotal, 0, false, true, true),
-      ],
+      asset_rows: allRows.filter((r: { section: string }) => r.section === 'asset') as BalanceSheetRow[],
+      liability_rows: allRows.filter((r: { section: string }) => r.section === 'liability') as BalanceSheetRow[],
+      equity_rows: allRows.filter((r: { section: string }) => r.section === 'equity') as BalanceSheetRow[],
     };
   }
 
@@ -1429,14 +1308,11 @@ export class MockFinanceApi implements FinanceApi {
 
           // 根据对方科目类别判断现金流量类别
           const counterpartEntries = v.entries.filter(e => e.subjectCode !== cashEntry.subjectCode && !cashCodes.includes(e.subjectCode));
-          let category = 'operating';
+          let category: string = 'operating';
           for (const ce of counterpartEntries) {
             const subj = this.store.subjects.find(s => s.code === ce.subjectCode);
-            const cat = subj?.category || '';
-            if (cat === 'asset' && (ce.subjectCode.startsWith('15') || ce.subjectCode.startsWith('16') || ce.subjectCode === '1511')) category = 'investing';
-            else if (cat === 'asset' && (ce.subjectCode.startsWith('11') || ce.subjectCode.startsWith('12') || ce.subjectCode === '1101')) category = 'investing';
-            else if (cat === 'liability' && (ce.subjectCode.startsWith('25') || ce.subjectCode.startsWith('27'))) category = 'financing';
-            else if (cat === 'equity') category = 'financing';
+            const result = classifyCashFlowCategory(ce.subjectCode, subj);
+            if (result !== 'operating') category = result;
           }
 
           if (category === 'investing') {
@@ -1458,24 +1334,35 @@ export class MockFinanceApi implements FinanceApi {
     return {
       company_name: '', period,
       rows: [
+        // === 经营活动 ===
         { row_no: 1, name: '一、经营活动产生的现金流量：', is_header: true, bold: true, indent_level: 0, section: 'operating', amount: 0 },
         { row_no: 2, name: '销售商品、提供劳务收到的现金', bold: false, indent_level: 0, section: 'operating', amount: operatingInflow, is_header: false, is_total: false },
+        { row_no: 3, name: '收到其他与经营活动有关的现金', bold: false, indent_level: 0, section: 'operating', amount: 0, is_header: false, is_total: false },
         { row_no: 5, name: '经营活动现金流入小计', is_total: true, bold: true, indent_level: 0, section: 'operating', amount: operatingInflow, is_header: false },
         { row_no: 6, name: '购买商品、接受劳务支付的现金', bold: false, indent_level: 0, section: 'operating', amount: operatingOutflow, is_header: false, is_total: false },
+        { row_no: 7, name: '支付给职工以及为职工支付的现金', bold: false, indent_level: 0, section: 'operating', amount: 0, is_header: false, is_total: false },
+        { row_no: 8, name: '支付的各项税费', bold: false, indent_level: 0, section: 'operating', amount: 0, is_header: false, is_total: false },
+        { row_no: 9, name: '支付其他与经营活动有关的现金', bold: false, indent_level: 0, section: 'operating', amount: 0, is_header: false, is_total: false },
         { row_no: 10, name: '经营活动现金流出小计', is_total: true, bold: true, indent_level: 0, section: 'operating', amount: operatingOutflow, is_header: false },
         { row_no: 11, name: '经营活动产生的现金流量净额', is_total: true, bold: true, indent_level: 0, section: 'operating', amount: opNet, is_header: false },
+        // === 投资活动 ===
         { row_no: 13, name: '二、投资活动产生的现金流量：', is_header: true, bold: true, indent_level: 0, section: 'investing', amount: 0, is_total: false },
-        { row_no: 14, name: '处置固定资产、无形资产收回的现金', bold: false, indent_level: 0, section: 'investing', amount: 0, is_header: false, is_total: false },
+        { row_no: 14, name: '收回短期投资、长期债券投资和长期股权投资收到的现金', bold: false, indent_level: 0, section: 'investing', amount: 0, is_header: false, is_total: false },
+        { row_no: 15, name: '取得投资收益收到的现金', bold: false, indent_level: 0, section: 'investing', amount: 0, is_header: false, is_total: false },
         { row_no: 16, name: '投资活动现金流入小计', is_total: true, bold: true, indent_level: 0, section: 'investing', amount: investingInflow, is_header: false },
-        { row_no: 18, name: '购建固定资产、无形资产支付的现金', bold: false, indent_level: 0, section: 'investing', amount: investingOutflow, is_header: false, is_total: false },
+        { row_no: 18, name: '购建固定资产、无形资产和其他非流动资产支付的现金', bold: false, indent_level: 0, section: 'investing', amount: investingOutflow, is_header: false, is_total: false },
         { row_no: 20, name: '投资活动现金流出小计', is_total: true, bold: true, indent_level: 0, section: 'investing', amount: investingOutflow, is_header: false },
         { row_no: 21, name: '投资活动产生的现金流量净额', is_total: true, bold: true, indent_level: 0, section: 'investing', amount: invNet, is_header: false },
+        // === 筹资活动 ===
         { row_no: 23, name: '三、筹资活动产生的现金流量：', is_header: true, bold: true, indent_level: 0, section: 'financing', amount: 0, is_total: false },
-        { row_no: 24, name: '取得借款收到的现金', bold: false, indent_level: 0, section: 'financing', amount: 0, is_header: false, is_total: false },
+        { row_no: 24, name: '取得借款收到的现金', bold: false, indent_level: 0, section: 'financing', amount: financingInflow, is_header: false, is_total: false },
+        { row_no: 25, name: '吸收投资者投资收到的现金', bold: false, indent_level: 0, section: 'financing', amount: 0, is_header: false, is_total: false },
         { row_no: 26, name: '筹资活动现金流入小计', is_total: true, bold: true, indent_level: 0, section: 'financing', amount: financingInflow, is_header: false },
-        { row_no: 28, name: '偿还债务支付的现金', bold: false, indent_level: 0, section: 'financing', amount: 0, is_header: false, is_total: false },
+        { row_no: 28, name: '偿还借款本金支付的现金', bold: false, indent_level: 0, section: 'financing', amount: financingOutflow, is_header: false, is_total: false },
+        { row_no: 29, name: '分配利润支付的现金', bold: false, indent_level: 0, section: 'financing', amount: 0, is_header: false, is_total: false },
         { row_no: 30, name: '筹资活动现金流出小计', is_total: true, bold: true, indent_level: 0, section: 'financing', amount: financingOutflow, is_header: false },
         { row_no: 31, name: '筹资活动产生的现金流量净额', is_total: true, bold: true, indent_level: 0, section: 'financing', amount: finNet, is_header: false },
+        // === 汇总 ===
         { row_no: 33, name: '四、现金及现金等价物净增加额', is_total: true, bold: true, indent_level: 0, section: 'summary', amount: totalNet, is_header: false },
       ],
     };
@@ -1626,7 +1513,7 @@ export class MockFinanceApi implements FinanceApi {
     const a = document.createElement('a');
     a.href = url;
     const now = new Date();
-    const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+    const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
     a.download = `ERP数据备份_${ts}.json`;
     a.click();
     URL.revokeObjectURL(url);
@@ -1644,7 +1531,7 @@ export class MockFinanceApi implements FinanceApi {
     const a = document.createElement('a');
     a.href = url;
     const now = new Date();
-    const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+    const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
     a.download = `ERP数据导出_${ts}.json`;
     a.click();
     URL.revokeObjectURL(url);

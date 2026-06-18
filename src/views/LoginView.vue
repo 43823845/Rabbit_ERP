@@ -35,6 +35,7 @@ const showCreateDialog = ref(false);
 const newCompanyForm = reactive({
   name: '',
   contactPerson: '',
+  legalRepresentative: '',
   phone: '',
   address: '',
   taxNo: '',
@@ -90,6 +91,7 @@ async function handleLogin() {
 function openCreateDialog() {
   newCompanyForm.name = '';
   newCompanyForm.contactPerson = '';
+  newCompanyForm.legalRepresentative = '';
   newCompanyForm.phone = '';
   newCompanyForm.address = '';
   newCompanyForm.taxNo = '';
@@ -108,17 +110,22 @@ function onTaxNoInput(val: string) {
 async function handleCreateCompany() {
   if (!newCompanyForm.name.trim()) { ElMessage.warning('请输入公司名称'); return; }
   if (newCompanyForm.name.trim().length < 2) { ElMessage.warning('公司名称至少2个字符'); return; }
-  if (newCompanyForm.contactPerson && newCompanyForm.contactPerson.trim().length < 2) { ElMessage.warning('联系人姓名至少2个字符'); return; }
+  if (!newCompanyForm.contactPerson.trim()) { ElMessage.warning('请输入联系人'); return; }
+  if (newCompanyForm.contactPerson.trim().length < 2) { ElMessage.warning('联系人姓名至少2个字符'); return; }
+  if (!newCompanyForm.legalRepresentative.trim()) { ElMessage.warning('请输入企业法人'); return; }
+  if (newCompanyForm.legalRepresentative.trim().length < 2) { ElMessage.warning('企业法人至少2个字符'); return; }
   if (newCompanyForm.phone && !/^\d{11}$/.test(newCompanyForm.phone.trim())) {
     ElMessage.warning('联系电话必须为11位数字'); return;
   }
-  if (newCompanyForm.taxNo && !/^[A-Z0-9]{15,18}$/.test(newCompanyForm.taxNo.trim())) {
+  if (!newCompanyForm.taxNo.trim()) { ElMessage.warning('请输入税号'); return; }
+  if (!/^[A-Z0-9]{15,18}$/.test(newCompanyForm.taxNo.trim())) {
     ElMessage.warning('税号必须为15-18位大写字母或数字'); return;
   }
   creating.value = true;
   try {
     const c = await api.createCompany(newCompanyForm.name.trim(), {
       contactPerson: newCompanyForm.contactPerson.trim(),
+      legalRepresentative: newCompanyForm.legalRepresentative.trim(),
       phone: newCompanyForm.phone.trim(),
       address: newCompanyForm.address.trim(),
       taxNo: newCompanyForm.taxNo.trim(),
@@ -228,8 +235,11 @@ async function handleCreateCompany() {
         <el-form-item label="公司名称" required>
           <el-input v-model="newCompanyForm.name" placeholder="如：某某科技有限公司" maxlength="50" show-word-limit />
         </el-form-item>
-        <el-form-item label="联系人">
+        <el-form-item label="联系人" required>
           <el-input v-model="newCompanyForm.contactPerson" placeholder="联系人姓名" maxlength="20" />
+        </el-form-item>
+        <el-form-item label="企业法人" required>
+          <el-input v-model="newCompanyForm.legalRepresentative" placeholder="企业法人姓名" maxlength="20" />
         </el-form-item>
         <el-form-item label="联系电话">
           <el-input v-model="newCompanyForm.phone" placeholder="请输入11位手机号" maxlength="11" show-word-limit
@@ -238,7 +248,7 @@ async function handleCreateCompany() {
         <el-form-item label="地址">
           <el-input v-model="newCompanyForm.address" placeholder="公司注册/经营地址" maxlength="100" show-word-limit />
         </el-form-item>
-        <el-form-item label="税号">
+        <el-form-item label="税号" required>
           <el-input v-model="newCompanyForm.taxNo" placeholder="15-18位大写字母或数字" maxlength="18" show-word-limit
             @input="(v: string) => onTaxNoInput(v)" />
         </el-form-item>

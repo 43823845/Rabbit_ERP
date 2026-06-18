@@ -5,6 +5,7 @@
  * 职责：明细账、总账、科目余额表、多栏账、数量金额明细账/总账、核算项目余额表/明细账/组合表
  */
 import { onMounted, ref, computed, watch } from 'vue';
+import { ElMessage } from 'element-plus';
 import { getFinanceApi } from '../api';
 import type { SubjectBalance, FinanceSubject, MultiColumnLedgerResult, MultiColumnLedgerRow,
   QuantityDetailLedgerRow, QuantityGeneralLedgerRow,
@@ -191,7 +192,7 @@ function mcRowTotal(row: MultiColumnLedgerRow): number {
 
 /* 加载多栏方案列表 */
 async function loadMcSchemes() {
-  try { mcSchemes.value = await api.listMultiColumnSchemes(); } catch (_) { mcSchemes.value = []; }
+  try { mcSchemes.value = await api.listMultiColumnSchemes(); } catch (e) { console.warn('[LedgerView] 加载多栏方案失败:', e); mcSchemes.value = []; }
 }
 
 /* 选中方案 */
@@ -202,7 +203,7 @@ async function selectMcScheme(id: number) {
   mcParentCode.value = s.parent_code;
   mcParentName.value = s.parent_name;
   mcSchemeName.value = s.name;
-  try { mcChildren.value = JSON.parse(s.children_json || '[]'); } catch (_) { mcChildren.value = []; }
+  try { mcChildren.value = JSON.parse(s.children_json || '[]'); } catch (e) { console.warn('[LedgerView] 解析子科目JSON失败:', e); mcChildren.value = []; }
   await queryMultiColumn();
 }
 
@@ -376,12 +377,12 @@ const pbRows = ref<AuxProjectBalanceRow[]>([]);
 const pbLoading = ref(false);
 
 async function loadAuxTypes() {
-  try { pbAuxTypes.value = await api.listAuxProjectTypes(); } catch (_) { pbAuxTypes.value = []; }
+  try { pbAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pbAuxTypes.value = []; }
 }
 async function onPbTypeChange() {
   pbValueId.value = null;
   if (pbTypeId.value) {
-    try { pbAuxValues.value = await api.listAuxProjectValues(pbTypeId.value); } catch (_) { pbAuxValues.value = []; }
+    try { pbAuxValues.value = await api.listAuxProjectValues(pbTypeId.value); } catch (e) { console.warn('[LedgerView] 加载核算项目值失败:', e); pbAuxValues.value = []; }
   } else {
     pbAuxValues.value = [];
   }
@@ -412,12 +413,12 @@ const pdRows = ref<AuxProjectDetailRow[]>([]);
 const pdLoading = ref(false);
 
 async function loadPdAuxTypes() {
-  try { pdAuxTypes.value = await api.listAuxProjectTypes(); } catch (_) { pdAuxTypes.value = []; }
+  try { pdAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pdAuxTypes.value = []; }
 }
 async function onPdTypeChange() {
   pdValueId.value = null;
   if (pdTypeId.value) {
-    try { pdAuxValues.value = await api.listAuxProjectValues(pdTypeId.value); } catch (_) { pdAuxValues.value = []; }
+    try { pdAuxValues.value = await api.listAuxProjectValues(pdTypeId.value); } catch (e) { console.warn('[LedgerView] 加载核算项目值失败:', e); pdAuxValues.value = []; }
   } else {
     pdAuxValues.value = [];
   }
@@ -857,6 +858,88 @@ watch(activeBook, (val) => {
   if (val === 'projectBalance') loadAuxTypes();
   if (val === 'projectDetail') loadPdAuxTypes();
 });
+
+/* ---- 打印 ---- */
+function handlePrint() {
+  window.print();
+}
+
+/* ---- 导出 CSV 通用工具 ---- */
+function exportCSV(headers: string[], rows: string[][], bookName: string) {
+  const now = new Date();
+  const month = period.value;
+  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+  const csv = '\uFEFF' + [headers, ...rows]
+    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${bookName}_${month}_${time}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---- 明细账导出 ---- */
+function handleExportDetail() {
+  if (detailRows.value.length === 0) {
+    ElMessage.warning('暂无数据可导出');
+    return;
+  }
+  const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '方向', '余额'];
+  const rows = detailRows.value.map(r => [
+    r.date,
+    r.voucher,
+    r.summary,
+    r.debit > 0 ? r.debit.toFixed(2) : '',
+    r.credit > 0 ? r.credit.toFixed(2) : '',
+    r.direction,
+    r.balance.toFixed(2),
+  ]);
+  exportCSV(headers, rows, `明细账_${detailSubjectCode.value || '未选'}`);
+  ElMessage.success('明细账导出成功');
+}
+
+/* ---- 总账导出 ---- */
+function handleExportGeneral() {
+  if (generalRows.value.length === 0) {
+    ElMessage.warning('暂无数据可导出');
+    return;
+  }
+  const headers = ['科目编码', '科目名称', '摘要', '借方金额', '贷方金额', '方向', '余额'];
+  const rows = generalRows.value.map(r => [
+    r.code,
+    r.name,
+    r.summary,
+    r.debit > 0 ? r.debit.toFixed(2) : '',
+    r.credit > 0 ? r.credit.toFixed(2) : '',
+    r.direction,
+    r.balance.toFixed(2),
+  ]);
+  exportCSV(headers, rows, '总账');
+  ElMessage.success('总账导出成功');
+}
+
+/* ---- 科目余额表导出 ---- */
+function handleExportBalance() {
+  if (balanceList.value.length === 0) {
+    ElMessage.warning('暂无数据可导出');
+    return;
+  }
+  const headers = ['科目编码', '科目名称', '方向', '期初余额', '借方发生额', '贷方发生额', '期末余额'];
+  const rows = balanceList.value.map(r => [
+    r.code,
+    r.name,
+    r.directionLabel,
+    r.openingBalance !== 0 ? r.openingBalance.toFixed(2) : '',
+    r.debitAmount !== 0 ? r.debitAmount.toFixed(2) : '',
+    r.creditAmount !== 0 ? r.creditAmount.toFixed(2) : '',
+    r.endingBalance !== 0 ? r.endingBalance.toFixed(2) : '',
+  ]);
+  exportCSV(headers, rows, '科目余额表');
+  ElMessage.success('科目余额表导出成功');
+}
 </script>
 
 <template>
@@ -912,8 +995,8 @@ watch(activeBook, (val) => {
             <div class="query-right">
               <el-button type="primary" size="small" @click="queryDetailLedger()">查询</el-button>
               <el-button size="small" @click="detailStartDate='';detailEndDate='';detailIncludeUnposted=false;queryDetailLedger()">重置</el-button>
-              <el-button size="small">打印</el-button>
-              <el-button size="small">导出</el-button>
+              <el-button size="small" @click="handlePrint">打印</el-button>
+              <el-button size="small" @click="handleExportDetail">导出</el-button>
             </div>
           </div>
 
@@ -938,12 +1021,12 @@ watch(activeBook, (val) => {
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="借方" min-width="110" align="right">
+              <el-table-column label="借方" min-width="110" align="center">
                 <template #default="{ row }">
                   <span v-if="row.debit !== 0" class="money">{{ row.debit.toFixed(2) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="贷方" min-width="110" align="right">
+              <el-table-column label="贷方" min-width="110" align="center">
                 <template #default="{ row }">
                   <span v-if="row.credit !== 0" class="money">{{ row.credit.toFixed(2) }}</span>
                 </template>
@@ -955,7 +1038,7 @@ watch(activeBook, (val) => {
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="余额" min-width="110" align="right">
+              <el-table-column label="余额" min-width="110" align="center">
                 <template #default="{ row }">
                   <span class="money">{{ row.balance.toFixed(2) }}</span>
                 </template>
@@ -996,8 +1079,8 @@ watch(activeBook, (val) => {
             <div class="query-right">
               <el-button type="primary" size="small" @click="queryGeneralLedger">查询</el-button>
               <el-button size="small">刷新</el-button>
-              <el-button size="small">打印</el-button>
-              <el-button size="small">导出</el-button>
+              <el-button size="small" @click="handlePrint">打印</el-button>
+              <el-button size="small" @click="handleExportGeneral">导出</el-button>
             </div>
           </div>
 
@@ -1007,18 +1090,18 @@ watch(activeBook, (val) => {
               :span-method="generalSpanMethod"
             >
               <el-table-column prop="code" label="科目编码" min-width="85" align="center" />
-              <el-table-column prop="name" label="科目名称" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="name" label="科目名称" min-width="140" align="center" show-overflow-tooltip />
               <el-table-column prop="summary" label="摘要" min-width="130" show-overflow-tooltip>
                 <template #default="{ row }">
                   <span :class="{ 'summary-highlight': row.rowType !== 'opening' }">{{ row.summary }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="借方" min-width="110" align="right">
+              <el-table-column label="借方" min-width="110" align="center">
                 <template #default="{ row }">
                   <span v-if="row.debit !== 0" class="money">{{ row.debit.toFixed(2) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="贷方" min-width="110" align="right">
+              <el-table-column label="贷方" min-width="110" align="center">
                 <template #default="{ row }">
                   <span v-if="row.credit !== 0" class="money">{{ row.credit.toFixed(2) }}</span>
                 </template>
@@ -1030,7 +1113,7 @@ watch(activeBook, (val) => {
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="余额" min-width="110" align="right">
+              <el-table-column label="余额" min-width="110" align="center">
                 <template #default="{ row }">
                   <span class="money">{{ row.balance.toFixed(2) }}</span>
                 </template>
@@ -1054,8 +1137,8 @@ watch(activeBook, (val) => {
             </div>
             <div class="query-right">
               <el-button type="primary" size="small" @click="loadData">查询</el-button>
-              <el-button size="small">导出</el-button>
-              <el-button size="small">打印</el-button>
+              <el-button size="small" @click="handleExportBalance">导出</el-button>
+              <el-button size="small" @click="handlePrint">打印</el-button>
             </div>
           </div>
           <div class="data-panel" v-loading="loading">
@@ -1069,22 +1152,22 @@ watch(activeBook, (val) => {
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="期初余额" align="right" min-width="110">
+              <el-table-column label="期初余额" align="center" min-width="110">
                 <template #default="{ row }">
                   <span v-if="row.openingBalance !== 0" class="money">{{ row.openingBalance.toFixed(2) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="借方发生额" align="right" min-width="110">
+              <el-table-column label="借方发生额" align="center" min-width="110">
                 <template #default="{ row }">
                   <span v-if="row.debitAmount !== 0" class="money">{{ row.debitAmount.toFixed(2) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="贷方发生额" align="right" min-width="110">
+              <el-table-column label="贷方发生额" align="center" min-width="110">
                 <template #default="{ row }">
                   <span v-if="row.creditAmount !== 0" class="money">{{ row.creditAmount.toFixed(2) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="期末余额" align="right" min-width="110">
+              <el-table-column label="期末余额" align="center" min-width="110">
                 <template #default="{ row }">
                   <span v-if="row.endingBalance !== 0" class="money">{{ row.endingBalance.toFixed(2) }}</span>
                 </template>
@@ -1145,14 +1228,14 @@ watch(activeBook, (val) => {
                 </el-table-column>
                 <el-table-column prop="summary" label="摘要" min-width="140" show-overflow-tooltip />
                 <template v-for="(col, ci) in mcColumns" :key="col.code">
-                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="right" min-width="110">
+                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="center" min-width="110">
                     <template #default="{ row }">{{ row.cells[ci].debit > 0 ? row.cells[ci].debit.toFixed(2) : '' }}</template>
                   </el-table-column>
-                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="right" min-width="110">
+                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="center" min-width="110">
                     <template #default="{ row }">{{ row.cells[ci].credit > 0 ? row.cells[ci].credit.toFixed(2) : '' }}</template>
                   </el-table-column>
                 </template>
-                <el-table-column label="合计" align="right" min-width="100">
+                <el-table-column label="合计" align="center" min-width="100">
                   <template #default="{ row }">{{ mcRowTotal(row).toFixed(2) }}</template>
                 </el-table-column>
               </el-table>
@@ -1171,14 +1254,14 @@ watch(activeBook, (val) => {
                   <template #default>本期间合计</template>
                 </el-table-column>
                 <template v-for="(col, ci) in mcColumns" :key="col.code">
-                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="right" min-width="110">
+                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="center" min-width="110">
                     <template #default="{ row }">{{ row.cells[ci].debit > 0 ? row.cells[ci].debit.toFixed(2) : '' }}</template>
                   </el-table-column>
-                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="right" min-width="110">
+                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="center" min-width="110">
                     <template #default="{ row }">{{ row.cells[ci].credit > 0 ? row.cells[ci].credit.toFixed(2) : '' }}</template>
                   </el-table-column>
                 </template>
-                <el-table-column label="合计" align="right" min-width="100">
+                <el-table-column label="合计" align="center" min-width="100">
                   <template #default="{ row }">{{ mcRowTotal(row).toFixed(2) }}</template>
                 </el-table-column>
               </el-table>
@@ -1233,16 +1316,16 @@ watch(activeBook, (val) => {
                 <template #default="{ row }">{{ row.voucher_word }}-{{ row.voucher_no }}</template>
               </el-table-column>
               <el-table-column prop="summary" label="摘要" min-width="130" show-overflow-tooltip />
-              <el-table-column prop="debit" label="借方金额" align="right" min-width="100">
+              <el-table-column prop="debit" label="借方金额" align="center" min-width="100">
                 <template #default="{ row }">{{ row.debit > 0 ? row.debit.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="credit" label="贷方金额" align="right" min-width="100">
+              <el-table-column prop="credit" label="贷方金额" align="center" min-width="100">
                 <template #default="{ row }">{{ row.credit > 0 ? row.credit.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="quantity" label="数量" align="right" min-width="80">
+              <el-table-column prop="quantity" label="数量" align="center" min-width="80">
                 <template #default="{ row }">{{ row.quantity > 0 ? row.quantity.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="unit_price" label="单价" align="right" min-width="85">
+              <el-table-column prop="unit_price" label="单价" align="center" min-width="85">
                 <template #default="{ row }">{{ row.unit_price > 0 ? row.unit_price.toFixed(4) : '' }}</template>
               </el-table-column>
               <el-table-column prop="unit" label="单位" align="center" width="60" />
@@ -1281,19 +1364,19 @@ watch(activeBook, (val) => {
             <el-table v-if="qgRows.length > 0" :data="qgRows" border stripe size="small" :max-height="450">
               <el-table-column prop="code" label="科目编码" min-width="90" fixed />
               <el-table-column prop="name" label="科目名称" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="total_debit" label="借方金额" align="right" min-width="110">
+              <el-table-column prop="total_debit" label="借方金额" align="center" min-width="110">
                 <template #default="{ row }">{{ row.total_debit.toFixed(2) }}</template>
               </el-table-column>
-              <el-table-column prop="total_credit" label="贷方金额" align="right" min-width="110">
+              <el-table-column prop="total_credit" label="贷方金额" align="center" min-width="110">
                 <template #default="{ row }">{{ row.total_credit.toFixed(2) }}</template>
               </el-table-column>
-              <el-table-column prop="in_quantity" label="数量(收)" align="right" min-width="90">
+              <el-table-column prop="in_quantity" label="数量(收)" align="center" min-width="90">
                 <template #default="{ row }">{{ row.in_quantity > 0 ? row.in_quantity.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="out_quantity" label="数量(付)" align="right" min-width="90">
+              <el-table-column prop="out_quantity" label="数量(付)" align="center" min-width="90">
                 <template #default="{ row }">{{ row.out_quantity > 0 ? row.out_quantity.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="net_quantity" label="净数量" align="right" min-width="85">
+              <el-table-column prop="net_quantity" label="净数量" align="center" min-width="85">
                 <template #default="{ row }">{{ row.net_quantity.toFixed(2) }}</template>
               </el-table-column>
               <el-table-column prop="unit" label="单位" align="center" width="60" />
@@ -1323,16 +1406,16 @@ watch(activeBook, (val) => {
             <el-table v-if="pbRows.length > 0" :data="pbRows" border stripe size="small" :max-height="450">
               <el-table-column prop="subject_code" label="科目编码" min-width="90" fixed />
               <el-table-column prop="subject_name" label="科目名称" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="debit_amount" label="借方金额" align="right" min-width="110">
+              <el-table-column prop="debit_amount" label="借方金额" align="center" min-width="110">
                 <template #default="{ row }">{{ row.debit_amount.toFixed(2) }}</template>
               </el-table-column>
-              <el-table-column prop="credit_amount" label="贷方金额" align="right" min-width="110">
+              <el-table-column prop="credit_amount" label="贷方金额" align="center" min-width="110">
                 <template #default="{ row }">{{ row.credit_amount.toFixed(2) }}</template>
               </el-table-column>
               <el-table-column label="余额方向" align="center" width="65">
                 <template #default="{ row }">{{ row.debit_amount >= row.credit_amount ? '借' : '贷' }}</template>
               </el-table-column>
-              <el-table-column label="余额" align="right" min-width="110">
+              <el-table-column label="余额" align="center" min-width="110">
                 <template #default="{ row }">{{ Math.abs(row.debit_amount - row.credit_amount).toFixed(2) }}</template>
               </el-table-column>
             </el-table>
@@ -1370,10 +1453,10 @@ watch(activeBook, (val) => {
               <el-table-column prop="summary" label="摘要" min-width="120" show-overflow-tooltip />
               <el-table-column prop="subject_code" label="科目编码" min-width="85" show-overflow-tooltip />
               <el-table-column prop="subject_name" label="科目名称" min-width="100" show-overflow-tooltip />
-              <el-table-column prop="debit" label="借方金额" align="right" min-width="100">
+              <el-table-column prop="debit" label="借方金额" align="center" min-width="100">
                 <template #default="{ row }">{{ row.debit > 0 ? row.debit.toFixed(2) : '' }}</template>
               </el-table-column>
-              <el-table-column prop="credit" label="贷方金额" align="right" min-width="100">
+              <el-table-column prop="credit" label="贷方金额" align="center" min-width="100">
                 <template #default="{ row }">{{ row.credit > 0 ? row.credit.toFixed(2) : '' }}</template>
               </el-table-column>
             </el-table>
@@ -1540,8 +1623,27 @@ watch(activeBook, (val) => {
 .data-panel :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-tr-bg-color: #fafbfc;
+  --el-table-row-hover-bg-color: #f3f6f9;
   font-size: 12px;
+}
+
+/* 默认行底色 */
+.data-panel :deep(.el-table__body tr) {
+  background-color: #fafbfc;
+}
+.data-panel :deep(.el-table__body tr:hover > td) {
+  background-color: #f3f6f9 !important;
+  border-bottom-color: var(--epp-line-light) !important;
+}
+
+/* 当前行激活/选中 */
+.data-panel :deep(.el-table__body tr.current-row) {
+  background-color: #e8f0f8 !important;
+}
+.data-panel :deep(.el-table__body tr.current-row > td) {
+  background-color: #e8f0f8 !important;
+  border-bottom-color: var(--epp-line-light) !important;
 }
 .data-panel :deep(.el-table th) {
   text-align: center; font-weight: 600;
@@ -1652,6 +1754,30 @@ watch(activeBook, (val) => {
 
 /* ---- 表格内 el-tag 尺寸统一 ---- */
 :deep(.el-tag--small) { font-size: 11px; }
+
+/* ---- 打印样式 ---- */
+@media print {
+  .page-wrap { height: auto; overflow: visible; }
+  .ledger-nav,
+  .subject-tree-panel,
+  .query-bar,
+  .pagination-bar,
+  .ph-right,
+  .ph-desc,
+  .mc-toolbar,
+  .mc-column-tags,
+  .summary-bar,
+  .el-button { display: none !important; }
+  .data-panel {
+    border: none; box-shadow: none; overflow: visible;
+    padding: 0; min-height: auto;
+  }
+  .data-panel :deep(.el-table) { font-size: 11px; }
+  .data-panel :deep(.el-table__body tr:hover > td) { background-color: #fafbfc !important; }
+  .data-panel :deep(.el-table__header-wrapper) { position: static; }
+  .ledger-content { overflow: visible; }
+  body { background: #fff; }
+}
 
 /* ---- 滚动条优化 ---- */
 .ledger-nav::-webkit-scrollbar,

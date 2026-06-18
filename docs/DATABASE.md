@@ -44,6 +44,7 @@ gl_opening_balance (期初余额) ── 按科目+期间唯一
 | id | INTEGER PK | 自增主键 |
 | name | TEXT NOT NULL | 公司名称 |
 | contact_person | TEXT | 联系人 |
+| legal_representative | TEXT | 企业法人 |
 | phone | TEXT | 联系电话 |
 | address | TEXT | 注册/经营地址 |
 | tax_no | TEXT | 统一社会信用代码 |

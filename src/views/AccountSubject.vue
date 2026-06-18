@@ -14,6 +14,12 @@ import { catLabel } from '../utils/subjects';
 
 const api = getFinanceApi();
 
+/** 科目树节点（FinanceSubject + 树形辅助字段） */
+interface SubjectTreeNode extends FinanceSubject {
+  _treeKey: string;
+  children: SubjectTreeNode[];
+}
+
 /* ---- 状态 ---- */
 const loading = ref(false);
 const allSubjects = ref<FinanceSubject[]>([]);
@@ -50,9 +56,9 @@ function catTag(c: string) { return catTagMap[c] || 'info'; }
 /* ---- 树形 key ---- */
 function treeKey(s: FinanceSubject) { return `${s.code}_${s.category}`; }
 
-function buildTree(list: FinanceSubject[]): any[] {
-  const map = new Map<string, any>();
-  const roots: any[] = [];
+function buildTree(list: FinanceSubject[]): SubjectTreeNode[] {
+  const map = new Map<string, SubjectTreeNode>();
+  const roots: SubjectTreeNode[] = [];
   for (const s of list) { map.set(treeKey(s), { ...s, _treeKey: treeKey(s), children: [] }); }
   for (const s of list) {
     const node = map.get(treeKey(s))!;
@@ -114,7 +120,7 @@ function resetFilters() {
 }
 
 /* ---- 操作 ---- */
-function isBuiltin(row: any) { return row.level === 1 && row.builtin === 1; }
+function isBuiltin(row: SubjectTreeNode) { return row.level === 1 && row.builtin === 1; }
 
 /** 表格引用（用于程序化展开/收起） */
 const subjectTableRef = ref();
@@ -126,7 +132,7 @@ const expandedKeys = ref<Set<string>>(new Set());
 function setExpandAll(val: boolean) {
   if (!subjectTableRef.value) return;
   const keys = new Set<string>();
-  function walk(nodes: any[]) {
+  function walk(nodes: SubjectTreeNode[]) {
     for (const n of nodes) {
       if (n.children && n.children.length > 0) {
         if (val) {
@@ -144,7 +150,7 @@ function setExpandAll(val: boolean) {
 }
 
 /** 点击名称列切换展开/收起 */
-function toggleNameExpand(row: any) {
+function toggleNameExpand(row: SubjectTreeNode) {
   if (!row.children || row.children.length === 0) return;
   const wasExpanded = expandedKeys.value.has(row._treeKey);
   subjectTableRef.value?.toggleRowExpansion(row, !wasExpanded);
@@ -158,7 +164,7 @@ function toggleNameExpand(row: any) {
 }
 
 /** 行样式：禁用灰化 + 父级有子数据高亮 */
-function tableRowClassName({ row }: { row: any }) {
+function tableRowClassName({ row }: { row: SubjectTreeNode }) {
   if (row.enabled === 0) return 'row-disabled';
   if (row.children && row.children.length > 0 && !expandedKeys.value.has(row._treeKey)) return 'row-has-children';
   return '';
@@ -168,7 +174,7 @@ function openCreate() { editingSubject.value = null; modalOpen.value = true; }
 
 function openCreateChild(parent: FinanceSubject) {
   editingSubject.value = null;
-  (window as any).__prefillParent = parent;
+  (window as Window & { __prefillParent?: FinanceSubject }).__prefillParent = parent;
   modalOpen.value = true;
 }
 
@@ -183,8 +189,8 @@ async function handleDelete(row: FinanceSubject) {
     await api.deleteSubject(row.code);
     ElMessage.success('已删除');
     await load();
-  } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e.message || '删除失败');
+  } catch (e: unknown) {
+    if (e !== 'cancel') ElMessage.error((e as Error)?.message || '删除失败');
   }
 }
 
@@ -195,15 +201,15 @@ async function toggleEnabled(row: FinanceSubject) {
       code: row.code, name: row.name, direction: row.direction,
       category: row.category, enabled: v, parentCode: row.parent_code, level: row.level,
       auxType: row.auxType || '', isCash: row.isCash ?? 0,
-    } as any);
+    });
     ElMessage.success(v ? '已启用' : '已禁用');
     await load();
-  } catch (e: any) { ElMessage.error(e.message); }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
 }
 
 async function handleRenumber() {
   try { await api.renumberSubjects(); ElMessage.success('编号已整理'); await load(); }
-  catch (e: any) { ElMessage.error(e.message); }
+  catch (e: unknown) { ElMessage.error((e as Error)?.message || '整理失败'); }
 }
 
 function onSaved() { modalOpen.value = false; load(); }
@@ -229,7 +235,10 @@ function handleExport() {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `会计科目_${new Date().toISOString().slice(0, 10)}.csv`;
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+  a.href = url; a.download = `会计科目_${month}_${time}.csv`;
   a.click(); URL.revokeObjectURL(url);
   ElMessage.success('导出成功');
 }
@@ -263,13 +272,13 @@ async function handleImportFile(e: Event) {
           parentCode: parentCode?.trim() || '',
           auxType: auxType?.trim() || '',
           isCash: parseInt(isCash) || 0,
-        } as any);
+        });
         created++;
       } catch { skipped++; }
     }
     ElMessage.success(`导入完成：新增 ${created} 条，跳过 ${skipped} 条`);
     await load();
-  } catch (e: any) { ElMessage.error('导入失败：' + (e.message || '文件格式错误')); }
+  } catch (e: unknown) { ElMessage.error('导入失败：' + ((e as Error)?.message || '文件格式错误')); }
   // 重置 input 以便重复导入同一文件
   if (importFileRef.value) importFileRef.value.value = '';
 }
@@ -303,7 +312,7 @@ async function handleBatchDelete() {
     ElMessage.success(`已删除 ${n} 条`);
     selectedRows.value = [];
     await load();
-  } catch (e: any) { if (e !== 'cancel') ElMessage.error(e.message); }
+  } catch (e: unknown) { if (e !== 'cancel') ElMessage.error((e as Error)?.message || '操作失败'); }
 }
 
 async function batchSetEnabled(enabled: boolean) {
@@ -314,7 +323,7 @@ async function batchSetEnabled(enabled: boolean) {
       await api.updateSubject({
         code: r.code, name: r.name, direction: r.direction,
         category: r.category, enabled: enabled ? 1 : 0, parentCode: r.parent_code, level: r.level,
-      } as any);
+      });
       n++;
     } catch { /* skip */ }
   }
@@ -392,7 +401,7 @@ async function batchSetEnabled(enabled: boolean) {
         border
         size="small"
         row-key="_treeKey"
-        :tree-props="{ children: 'children', hasChildren: (row: any) => (row.children || []).length > 0 }"
+        :tree-props="{ children: 'children', hasChildren: (row: SubjectTreeNode) => (row.children || []).length > 0 }"
         @selection-change="handleSelectionChange"
         :row-class-name="tableRowClassName"
         :header-cell-style="{ backgroundColor: '#f5f7fa', color: '#303133', fontWeight: '500' }"
@@ -427,9 +436,9 @@ async function batchSetEnabled(enabled: boolean) {
           </template>
         </el-table-column>
 
-        <el-table-column prop="code" label="编码" min-width="75" align="left" sortable show-overflow-tooltip />
+        <el-table-column prop="code" label="编码" min-width="75" align="center" sortable show-overflow-tooltip />
 
-        <el-table-column prop="name" label="名称" min-width="150" align="left" show-overflow-tooltip>
+        <el-table-column prop="name" label="名称" min-width="150" align="center" show-overflow-tooltip>
           <template #default="{ row }">
             <div
               :class="{ 'name-cell-expand': row.children && row.children.length > 0 }"
@@ -470,7 +479,7 @@ async function batchSetEnabled(enabled: boolean) {
           </template>
         </el-table-column>
 
-        <el-table-column label="父科目" min-width="100" align="left" show-overflow-tooltip>
+        <el-table-column label="父科目" min-width="100" align="center" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.parent_code" style="color:#909399;font-size:12px">{{ parentName(row.parent_code) }}</span>
             <span v-else style="color:#ccc;font-size:12px">—</span>
@@ -620,6 +629,27 @@ async function batchSetEnabled(enabled: boolean) {
 
 .table-wrapper :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-tr-bg-color: #fafbfc;
+  --el-table-row-hover-bg-color: #f3f6f9;
+}
+
+/* 默认行底色 */
+.table-wrapper :deep(.el-table__body tr) {
+  background-color: #fafbfc;
+}
+.table-wrapper :deep(.el-table__body tr:hover > td) {
+  background-color: #f3f6f9 !important;
+  border-bottom-color: var(--epp-line-light) !important;
+}
+
+/* 当前行激活/选中 */
+.table-wrapper :deep(.el-table__body tr.current-row) {
+  background-color: #e8f0f8 !important;
+}
+.table-wrapper :deep(.el-table__body tr.current-row > td) {
+  background-color: #e8f0f8 !important;
+  border-bottom-color: var(--epp-line-light) !important;
 }
 
 .table-wrapper :deep(.el-table th) { font-size: 12px; color: var(--epp-ink-sub); }
