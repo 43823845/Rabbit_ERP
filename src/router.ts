@@ -1,8 +1,4 @@
-/**
- * router.ts — Vue Router 路由配置
- *
- * 职责：定义页面路由表、含登录守卫，使用 Hash 模式适配 Electron 环境
- */
+// ponytail: Vue Router — Hash模式适配Electron，含登录守卫
 import { createRouter, createWebHashHistory } from 'vue-router';
 import { useAuth } from './auth';
 import LoginView from './views/LoginView.vue';

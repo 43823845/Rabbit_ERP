@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/**
- * AccountSubject.vue — 会计科目管理页面
- *
- * 职责：科目树形列表展示、搜索过滤、新增/编辑/删除、批量操作
- */
+// ponytail: 会计科目管理 — 树形列表/搜索过滤/增删改/批量操作
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search, Refresh, Plus, Edit, Delete, ArrowDown } from '@element-plus/icons-vue';
@@ -174,7 +170,7 @@ function openCreate() { editingSubject.value = null; modalOpen.value = true; }
 
 function openCreateChild(parent: FinanceSubject) {
   editingSubject.value = null;
-  (window as Window & { __prefillParent?: FinanceSubject }).__prefillParent = parent;
+  window.__prefillParent = parent;
   modalOpen.value = true;
 }
 
@@ -259,7 +255,7 @@ async function handleImportFile(e: Event) {
     for (const line of dataLines) {
       const cols = parseCSVLine(line);
       if (cols.length < 4) continue;
-      const [code, name, dir, cat, level, parentCode, enabled, auxType, isCash] = cols;
+      const [code, name, dir, cat, level, parentCode, , auxType, isCash] = cols;
       const exists = allSubjects.value.find(s => s.code === code);
       if (exists) { skipped++; continue; }
       try {
@@ -307,7 +303,7 @@ async function handleBatchDelete() {
     });
     let n = 0;
     for (const r of selectedRows.value) {
-      try { await api.deleteSubject(r.code); n++; } catch { /* skip */ }
+      try { await api.deleteSubject(r.code); n++; } catch (e) { console.warn('[AccountSubject] 批量删除跳过:', e); }
     }
     ElMessage.success(`已删除 ${n} 条`);
     selectedRows.value = [];
@@ -325,7 +321,7 @@ async function batchSetEnabled(enabled: boolean) {
         category: r.category, enabled: enabled ? 1 : 0, parentCode: r.parent_code, level: r.level,
       });
       n++;
-    } catch { /* skip */ }
+    } catch (e) { console.warn('[AccountSubject] 批量启/禁用跳过:', e); }
   }
   ElMessage.success(`${enabled ? '启用' : '禁用'} ${n} 条`);
   await load();

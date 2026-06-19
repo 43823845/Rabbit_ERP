@@ -1,10 +1,5 @@
 <script setup lang="ts">
-/**
- * SettingsView.vue — 系统设置页面
- *
- * 布局：顶部 el-tabs 卡片标签（金蝶/用友经典风格）
- * 功能：基础信息编辑、账套管理、用户管理、修改密码、全年期间管理、系统信息
- */
+// ponytail: 系统设置 — 基础信息/账套/用户/密码/期间管理
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -54,7 +49,7 @@ const subjectsCount = ref(0);
 
 const currentUser = computed(() => auth.state.user);
 const isAdmin = computed(() => currentUser.value?.role === 'admin');
-const isElectron = computed(() => !!(window as Window & { electronAPI?: unknown }).electronAPI);
+const isElectron = computed(() => !!window.electronAPI);
 
 const roleLabel = computed(() => {
   const map: Record<string, string> = {

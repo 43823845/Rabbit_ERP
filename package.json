@@ -11,9 +11,10 @@
     "dev:electron": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vue-tsc --noEmit && vite build",
     "predev": "node scripts/sync-config.cjs",
-    "prebuild:exe": "node scripts/sync-config.cjs",
-    "build:exe": "vue-tsc --noEmit && vite build && set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&& set ELECTRON_CUSTOM_DIR=v35.7.5&& electron-builder --win --x64 --publish=never",
-    "build:exe:portable": "vue-tsc --noEmit && vite build && electron-builder --win portable --x64 --publish=never",
+    "prebuild:exe": "node scripts/sync-config.cjs && node scripts/cleanup-release.cjs",
+    "prebuild:exe:portable": "node scripts/sync-config.cjs && node scripts/cleanup-release.cjs",
+    "build:exe": "vue-tsc --noEmit && vite build && node scripts/cleanup-release.cjs && set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&& set ELECTRON_CUSTOM_DIR=v35.7.5&& electron-builder --win --x64 --publish=never",
+    "build:exe:portable": "vue-tsc --noEmit && vite build && node scripts/cleanup-release.cjs && set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/&& set ELECTRON_CUSTOM_DIR=v35.7.5&& electron-builder --win portable --x64 --publish=never",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

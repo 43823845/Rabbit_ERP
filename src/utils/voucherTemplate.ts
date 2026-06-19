@@ -1,9 +1,4 @@
-/**
- * 凭证模板工具 — 查看/导出/打印共用
- *
- * CSS 以 VoucherModal.vue 的 scoped 样式为"标准来源"
- * 导出的 buildVoucherTableHtml() / buildVoucherExportHtml() 供 VoucherView 和 printVoucher 使用
- */
+// ponytail: 凭证模板 — 查看/导出/打印共用CSS与HTML生成
 import { DIGIT_UNITS, digitLineClass, toDigitDisplay } from './amountDigit';
 import { toChineseUpper } from './chineseCurrency';
 import type { FinanceVoucher } from '../api';

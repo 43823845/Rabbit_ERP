@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/**
- * LoginView.vue — 登录页面
- *
- * 职责：用户登录认证、账套创建与选择
- */
+// ponytail: 登录页 — 用户认证/账套创建与选择
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
@@ -17,10 +13,10 @@ import { APP_CONFIG } from '../config';
 const api = getFinanceApi();
 
 /* Electron 窗口控制 */
-const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
-function winMin() { (window as any).electronAPI.windowMin(); }
-function winMax() { (window as any).electronAPI.windowMax(); }
-function winClose() { (window as any).electronAPI.windowClose(); }
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+function winMin() { window.electronAPI?.windowMin(); }
+function winMax() { window.electronAPI?.windowMax(); }
+function winClose() { window.electronAPI?.windowClose(); }
 const router = useRouter();
 const auth = useAuth();
 

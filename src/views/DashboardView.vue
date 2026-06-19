@@ -1,10 +1,5 @@
 <script setup lang="ts">
-/**
- * DashboardView.vue — 工作台/仪表盘页面
- *
- * 职责：凭证搜索与管理、凭证新增/编辑/查看、审核状态统计、列表高亮定位
- *      依赖 VoucherModal（表单弹窗）和 VoucherListTable（列表组件）
- */
+// ponytail: 工作台 — 凭证搜索/统计/增改查/高亮定位
 import { nextTick, onMounted, reactive, ref } from 'vue';
 import {
   Document, Checked, CircleCheck,
@@ -63,14 +58,14 @@ async function handleCardClick(status: string | null) {
     filter.status = undefined;
   } else {
     activeCard.value = status;
-    filter.status = (status as any) ?? undefined;
+    filter.status = (status as VoucherFilter['status']) ?? undefined;
   }
   await doSearch();
 }
 
 const searchList = ref<FinanceVoucher[]>([]);
 const highlightRowId = ref<number | null>(null);
-const tableRef = ref<any>(null);
+const tableRef = ref<{ setCurrentRow?: (row: unknown) => void } | null>(null);
 
 async function doSearch() {
   loading.value = true;

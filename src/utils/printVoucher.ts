@@ -1,28 +1,7 @@
-/**
- * 凭证打印工具
- *
- * 生成记账凭证的完整 HTML 打印页面
- * Electron 环境：通过主进程 webContents.print() 直接调起系统打印对话框
- * 浏览器环境：隐藏 iframe 加载内容，直接弹出系统打印对话框
- * 表格 CSS 与 HTML 生成复用 voucherTemplate 共享模块
- */
+// ponytail: 凭证打印 — Electron用webContents.print()，浏览器用隐藏iframe
 import { voucherTableCss, buildVoucherExportHtml } from './voucherTemplate';
 import type { FinanceVoucher } from '../api';
 
-/** Electron 类型的全局声明 */
-declare global {
-  interface Window {
-    electronAPI?: {
-      invoke(channel: string, ...args: unknown[]): Promise<unknown>;
-    };
-  }
-}
-
-/**
- * 生成记账凭证打印 HTML 并触发打印
- * @param voucher - 凭证数据对象
- * @returns 操作结果提示，失败时返回 warning 信息
- */
 export async function handlePrintVoucher(voucher: FinanceVoucher): Promise<string | void> {
   const html = `<!DOCTYPE html>
 <html>

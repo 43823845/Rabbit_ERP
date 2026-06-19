@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/**
- * App.vue — 应用根组件
- *
- * 职责：全局布局（侧栏导航 + 顶栏 + 主内容区）、公司切换、Electron 无边框窗口控制
- */
+// ponytail: 根组件 — 侧栏导航/顶栏/主内容区/公司切换/Electron窗口控制
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Timer, Grid, Setting, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument } from '@element-plus/icons-vue';
@@ -23,9 +19,9 @@ const companies = ref<Company[]>([]);
 const collapsed = ref(false);
 const routerViewKey = ref(0);
 
-const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
-function winMin() { isElectron && (window as any).electronAPI.windowMin(); }
-function winMax() { isElectron && (window as any).electronAPI.windowMax(); }
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+function winMin() { isElectron && window.electronAPI?.windowMin(); }
+function winMax() { isElectron && window.electronAPI?.windowMax(); }
 
 /* ---- 系统状态指示器 ---- */
 const now = ref(new Date());

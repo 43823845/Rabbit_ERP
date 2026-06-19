@@ -55,7 +55,7 @@ const selectedParent = computed(() => {
 
 function resetForm() {
   // 检查是否有预填父科目（新增子科目场景）
-  const prefill = (window as any).__prefillParent as FinanceSubject | undefined;
+  const prefill = window.__prefillParent;
 
   if (props.subject) {
     // 编辑模式
@@ -98,7 +98,7 @@ watch(() => props.open, (val) => {
   if (val) {
     loadParents().then(() => resetForm());
   } else {
-    (window as any).__prefillParent = undefined;
+    window.__prefillParent = undefined;
   }
 });
 

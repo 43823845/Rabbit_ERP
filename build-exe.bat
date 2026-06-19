@@ -7,6 +7,8 @@ echo   Rabbit_ERP 安装包构建脚本
 echo ========================================
 echo.
 
+:: ponytail: cleanup handled by prebuild:exe → cleanup-release.cjs
+
 :: 清除所有代理设置 (如果本机有代理且未运行，必须清理)
 set HTTP_PROXY=
 set HTTPS_PROXY=

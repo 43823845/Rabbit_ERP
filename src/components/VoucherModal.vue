@@ -1,13 +1,5 @@
 <script setup lang="ts">
-/**
- * VoucherModal.vue — 记账凭证新增/编辑/查看弹窗
- *
- * 职责：凭证表单的 UI 渲染与事件绑定
- * 逻辑层：由 useVoucherForm / useAttachments / useAmountEditing / useSubjectDropdown / useQuickAddSubject 接管
- *
- * 注意：所有 composable 的 ref/computed 必须析构到顶层，
- * 否则 Vue 模板编译器无法自动解包嵌套对象上的 Ref 属性。
- */
+// ponytail: 凭证弹窗 — UI渲染，逻辑由5个composable接管；ref/computed须析构到顶层供模板解包
 import { computed, onMounted, watch } from 'vue';
 import { getFinanceApi } from '../api';
 import { useAuth } from '../auth';

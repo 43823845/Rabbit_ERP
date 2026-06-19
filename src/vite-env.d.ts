@@ -1,15 +1,4 @@
-/**
- * vite-env.d.ts — 全局 TypeScript 类型定义
- *
- * 职责：定义 ERP 系统的全部数据模型接口，包括：
- *   - 公司 (Company) / 用户 (AuthUser, SysUser)
- *   - 会计科目 (FinanceSubject) / 期初余额 (OpeningBalance)
- *   - 凭证 (FinanceVoucher, VoucherEntry, VoucherAttachment)
- *   - 账簿报表 (SubjectBalance, DetailLedgerRow, TrialBalance, ProfitStatement, BalanceSheet)
- *   - API 接口 (FinanceApi)
- *   - 全局 Window 扩展
- */
-
+// ponytail: 全局类型定义 — ERP数据模型(科目/凭证/报表/API) + Window扩展
 /// <reference types="vite/client" />
 
 /* ---- company ---- */
@@ -561,5 +550,15 @@ export interface FinanceApi {
 declare global {
   interface Window {
     financeApi?: FinanceApi;
+    electronAPI?: {
+      invoke(channel: string, ...args: unknown[]): Promise<any>;
+      windowMin(): Promise<void>;
+      windowMax(): Promise<void>;
+      windowClose(): Promise<void>;
+    };
+    /** 科目表单预填父科目 */
+    __prefillParent?: FinanceSubject;
+    /** API 实例缓存 */
+    __financeApiInstance?: FinanceApi;
   }
 }

@@ -1,9 +1,4 @@
-/**
- * auth.ts — 认证状态管理模块
- *
- * 职责：用户登录/登出、状态持久化（localStorage）、全局认证状态响应式管理
- * 使用方式：通过 useAuth() 获取单例认证实例
- */
+// ponytail: 认证管理 — 登录/登出/localStorage持久化，useAuth()获取单例
 import { reactive } from 'vue';
 import type { AuthUser } from './vite-env';
 

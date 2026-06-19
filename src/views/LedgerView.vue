@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/**
- * LedgerView.vue — 账簿查询页面
- *
- * 职责：明细账、总账、科目余额表、多栏账、数量金额明细账/总账、核算项目余额表/明细账/组合表
- */
+// ponytail: 账簿查询 — 明细账/总账/余额表/多栏账/数量金额/核算项目
 import { onMounted, ref, computed, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getFinanceApi } from '../api';

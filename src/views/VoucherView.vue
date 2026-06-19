@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/**
- * VoucherView.vue — 记账凭证管理页面
- *
- * 职责：凭证列表展示、审核/过账/反审核、打印、整理断号、批量导出
- */
+// ponytail: 记账凭证管理页面 — 列表/审核/过账/打印/断号/导出
 import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Plus, Refresh, TrendCharts, Printer, View, Download } from '@element-plus/icons-vue';
@@ -36,26 +32,16 @@ function onDeleted() { modalOpen.value = false; refresh(); }
 function onViewed() { viewModalOpen.value = false; refresh(); }
 function onSelectionChange(rows: FinanceVoucher[]) { selectedVouchers.value = rows; }
 
-async function handleAudit(v: FinanceVoucher) {
-  const r = await api.auditVoucher(v.id);
-  if (r?.__error) { ElMessage.error(r.__error); return; }
-  ElMessage.success('已审核'); refresh();
+// ponytail: single voucher status action helper — 4 identical patterns collapsed to 1
+async function voucherAction(v: FinanceVoucher, fn: (id: number) => any, msg: string) {
+  const r = await fn(v.id);
+  if (r?.__error) return ElMessage.error(r.__error);
+  ElMessage.success(msg); refresh();
 }
-async function handleUnaudit(v: FinanceVoucher) {
-  const r = await api.unauditVoucher(v.id);
-  if (r?.__error) { ElMessage.error(r.__error); return; }
-  ElMessage.success('已取消审核'); refresh();
-}
-async function handlePost(v: FinanceVoucher) {
-  const r = await api.postVoucher(v.id);
-  if (r?.__error) { ElMessage.error(r.__error); return; }
-  ElMessage.success('已过账'); refresh();
-}
-async function handleUnpost(v: FinanceVoucher) {
-  const r = await api.unpostVoucher(v.id);
-  if (r?.__error) { ElMessage.error(r.__error); return; }
-  ElMessage.success('已反过账'); refresh();
-}
+async function handleAudit(v: FinanceVoucher) { voucherAction(v, id => api.auditVoucher(id), '已审核'); }
+async function handleUnaudit(v: FinanceVoucher) { voucherAction(v, id => api.unauditVoucher(id), '已取消审核'); }
+async function handlePost(v: FinanceVoucher) { voucherAction(v, id => api.postVoucher(id), '已过账'); }
+async function handleUnpost(v: FinanceVoucher) { voucherAction(v, id => api.unpostVoucher(id), '已反过账'); }
 async function handleDelete(v: FinanceVoucher) {
   await ElMessageBox.confirm(`确定删除凭证 ${v.voucher_word}-${v.voucher_no} 号？`, '确认删除', { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' });
   await api.deleteVoucher(v.id);
