@@ -21,6 +21,7 @@ const loading = ref(false);
 const allSubjects = ref<FinanceSubject[]>([]);
 const searchQuery = ref('');
 const selectedRows = ref<FinanceSubject[]>([]);
+const selectedIds = computed(() => new Set(selectedRows.value.map(s => treeKey(s))));
 
 const activeCategory = ref('all');
 const filterOptions = ref({
@@ -159,12 +160,17 @@ function toggleNameExpand(row: SubjectTreeNode) {
   expandedKeys.value = newSet;
 }
 
-/** 行样式：禁用灰化 + 父级有子数据高亮 */
-function tableRowClassName({ row }: { row: SubjectTreeNode }) {
-  if (row.enabled === 0) return 'row-disabled';
-  if (row.children && row.children.length > 0 && !expandedKeys.value.has(row._treeKey)) return 'row-has-children';
-  return '';
-}
+/** 行样式（computed 确保选中状态响应式更新） */
+const tableRowClassName = computed(() => {
+  const expanded = expandedKeys.value;
+  const ids = selectedIds.value;
+  return ({ row }: { row: SubjectTreeNode }) => {
+    if (ids.has(row._treeKey)) return 'selected-row';
+    if (row.enabled === 0) return 'row-disabled';
+    if (row.children && row.children.length > 0 && !expanded.has(row._treeKey)) return 'row-has-children';
+    return '';
+  };
+});
 
 function openCreate() { editingSubject.value = null; modalOpen.value = true; }
 
@@ -179,7 +185,20 @@ function openEdit(row: FinanceSubject) { editingSubject.value = row; modalOpen.v
 async function handleDelete(row: FinanceSubject) {
   if (isBuiltin(row)) { ElMessage.warning('内置科目不允许删除'); return; }
   try {
-    await ElMessageBox.confirm(`确定删除「${row.code} ${row.name}」？`, '删除确认', {
+    // 检查科目是否被凭证引用
+    const usage = await api.checkSubjectUsage(row.code);
+    const warnMessages: string[] = [];
+    if (usage.voucherCount > 0) {
+      warnMessages.push(`该科目在 ${usage.voucherCount} 笔凭证中被引用`);
+    }
+    if (usage.hasChildren) {
+      warnMessages.push('该科目下存在子科目');
+    }
+    const confirmMsg = warnMessages.length > 0
+      ? `确定删除「${row.code} ${row.name}」？\n\n⚠ 警告：${warnMessages.join('；')}，删除后可能导致数据异常。`
+      : `确定删除「${row.code} ${row.name}」？`;
+
+    await ElMessageBox.confirm(confirmMsg, '删除确认', {
       type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
     });
     await api.deleteSubject(row.code);
@@ -207,8 +226,6 @@ async function handleRenumber() {
   try { await api.renumberSubjects(); ElMessage.success('编号已整理'); await load(); }
   catch (e: unknown) { ElMessage.error((e as Error)?.message || '整理失败'); }
 }
-
-function onSaved() { modalOpen.value = false; load(); }
 
 /* ---- 导入/导出 ---- */
 const importFileRef = ref<HTMLInputElement | null>(null);
@@ -293,8 +310,6 @@ function parseCSVLine(line: string): string[] {
 }
 
 /* ---- 多选 ---- */
-function handleSelectionChange(rows: FinanceSubject[]) { selectedRows.value = rows; }
-
 async function handleBatchDelete() {
   if (selectedRows.value.length === 0) { ElMessage.warning('请先选择科目'); return; }
   try {
@@ -398,7 +413,7 @@ async function batchSetEnabled(enabled: boolean) {
         size="small"
         row-key="_treeKey"
         :tree-props="{ children: 'children', hasChildren: (row: SubjectTreeNode) => (row.children || []).length > 0 }"
-        @selection-change="handleSelectionChange"
+        @selection-change="(rows: FinanceSubject[]) => selectedRows = rows"
         :row-class-name="tableRowClassName"
         :header-cell-style="{ backgroundColor: '#f5f7fa', color: '#303133', fontWeight: '500' }"
         max-height="calc(100vh - 300px)"
@@ -521,7 +536,7 @@ async function batchSetEnabled(enabled: boolean) {
     </div>
 
     <!-- 新增/编辑弹窗 -->
-    <SubjectFormModal v-model:open="modalOpen" :subject="editingSubject" @saved="onSaved" />
+    <SubjectFormModal v-model:open="modalOpen" :subject="editingSubject" @saved="modalOpen = false; load()" />
   </div>
 </template>
 
@@ -626,16 +641,9 @@ async function batchSetEnabled(enabled: boolean) {
 .table-wrapper :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-tr-bg-color: #fafbfc;
-  --el-table-row-hover-bg-color: #f3f6f9;
 }
 
-/* 默认行底色 */
-.table-wrapper :deep(.el-table__body tr) {
-  background-color: #fafbfc;
-}
 .table-wrapper :deep(.el-table__body tr:hover > td) {
-  background-color: #f3f6f9 !important;
   border-bottom-color: var(--epp-line-light) !important;
 }
 
@@ -658,6 +666,11 @@ async function batchSetEnabled(enabled: boolean) {
 }
 .table-wrapper :deep(.row-disabled td) {
   color: var(--epp-ink-sub) !important;
+}
+
+/* 勾选行高亮 */
+.table-wrapper :deep(.el-table__body tr.selected-row > td.el-table__cell) {
+  background: #e6eaef !important;
 }
 
 /* ---- 行操作 ---- */

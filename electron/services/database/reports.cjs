@@ -52,12 +52,13 @@ function applyReportMethods(FinanceDatabase) {
       const cAmt = row.credit_amount;
 
       const subj = self.db.prepare('SELECT direction FROM bd_subject WHERE code = ? AND book_id = ?').get(row.code, self.currentBookId);
-      const balance = subj?.direction === 'debit'
+      const direction = subj?.direction || 'debit';
+      const balance = direction === 'debit'
         ? opDebit - opCredit + dAmt - cAmt
         : opCredit - opDebit + cAmt - dAmt;
 
       return { code: row.code, name: row.name, openingDebit: opDebit, openingCredit: opCredit,
-        debitAmount: dAmt, creditAmount: cAmt, balance };
+        debitAmount: dAmt, creditAmount: cAmt, balance, direction };
     });
   };
 
@@ -174,8 +175,10 @@ function applyReportMethods(FinanceDatabase) {
     const rows = balances.map(row => {
       tdo += row.openingDebit; tco += row.openingCredit;
       tda += row.debitAmount; tca += row.creditAmount;
-      const ed = row.balance >= 0 ? row.balance : 0;
-      const ec = row.balance < 0 ? -row.balance : 0;
+      // 按科目方向正确归类期末余额
+      const isDebitDir = row.direction === 'debit';
+      const ed = isDebitDir ? Math.max(0, row.balance) : Math.max(0, -row.balance);
+      const ec = isDebitDir ? Math.max(0, -row.balance) : Math.max(0, row.balance);
       tde += ed; tce += ec;
       return { ...row, endingDebit: ed, endingCredit: ec };
     });
@@ -514,12 +517,13 @@ function applyReportMethods(FinanceDatabase) {
       const cAmt = row.credit_amount;
 
       const subj = self.db.prepare('SELECT direction FROM bd_subject WHERE code = ? AND book_id = ?').get(row.code, self.currentBookId);
-      const balance = subj?.direction === 'debit'
+      const direction = subj?.direction || 'debit';
+      const balance = direction === 'debit'
         ? opDebit - opCredit + dAmt - cAmt
         : opCredit - opDebit + cAmt - dAmt;
 
       return { code: row.code, name: row.name, openingDebit: opDebit, openingCredit: opCredit,
-        debitAmount: dAmt, creditAmount: cAmt, balance };
+        debitAmount: dAmt, creditAmount: cAmt, balance, direction };
     });
   };
 

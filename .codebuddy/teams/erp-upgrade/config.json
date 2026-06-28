@@ -1,0 +1,18 @@
+{
+  "name": "erp-upgrade",
+  "leadAgentId": "b6011f59b61840f9817b72ec0f3a589c",
+  "workspacePath": "d:/Desktop/ERP外账系统",
+  "createdAt": "2026-06-28T13:14:10.052Z",
+  "options": {
+    "workspacePath": "d:/Desktop/ERP外账系统",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@erp-upgrade",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    }
+  ],
+  "isAutoTeam": false
+}

@@ -2,7 +2,7 @@
 // ponytail: 根组件 — 侧栏导航/顶栏/主内容区/公司切换/Electron窗口控制
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Timer, Grid, Setting, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument } from '@element-plus/icons-vue';
+import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Grid, Tools, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument, TrendCharts } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { useAuth } from './auth';
 import { getFinanceApi } from './api';
@@ -59,14 +59,14 @@ const timeStr = computed(() => {
 const isLoginPage = computed(() => route.path === '/login');
 
 const menuItems = [
-  { key: '/dashboard', label: '仪表盘', icon: HomeFilled },
-  { key: '/voucher',   label: '凭证',   icon: Document },
-  { key: '/ledger',    label: '账簿',   icon: Notebook },
-  { key: '/reports',   label: '报表',   icon: DataAnalysis },
-  { key: '/closing',   label: '结账',   icon: Timer },
-  { key: '/subjects',  label: '科目',   icon: Grid },
+  { key: '/dashboard', label: '仪表盘',   icon: HomeFilled },
+  { key: '/voucher',   label: '凭证',     icon: Document },
+  { key: '/ledger',    label: '账簿',     icon: Notebook },
+  { key: '/reports',   label: '报表',     icon: DataAnalysis },
+  { key: '/closing',   label: '期末结账', icon: TrendCharts },
+  { key: '/subjects',  label: '科目管理', icon: Grid },
   { key: '/opening',   label: '初始余额', icon: Wallet },
-  { key: '/settings',  label: '设置',   icon: Setting },
+  { key: '/settings',  label: '设置',     icon: Tools },
 ];
 
 const currentTitle = computed(() => menuItems.find(m => m.key === route.path)?.label || APP_CONFIG.title);

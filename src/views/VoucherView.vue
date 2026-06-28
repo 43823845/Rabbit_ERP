@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ponytail: 记账凭证管理页面 — 列表/审核/过账/打印/断号/导出
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref, shallowRef } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Plus, Refresh, TrendCharts, Printer, View, Download } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
@@ -11,13 +11,14 @@ import { voucherTableCss, buildVoucherExportHtml } from '../utils/voucherTemplat
 import type { FinanceVoucher } from '../api';
 
 const api = getFinanceApi();
-const vouchers = ref<FinanceVoucher[]>([]);
+const vouchers = shallowRef<FinanceVoucher[]>([]);
 const loading = ref(false);
 const modalOpen = ref(false);
 const viewModalOpen = ref(false);
 const editingVoucher = ref<FinanceVoucher | null>(null);
 const viewingVoucher = ref<FinanceVoucher | null>(null);
 const selectedVouchers = ref<FinanceVoucher[]>([]);
+const selectedVoucherIds = computed(() => new Set(selectedVouchers.value.map(v => v.id)));
 const exporting = ref(false);
 
 async function refresh() { loading.value = true; try { vouchers.value = await api.listVouchers(); } finally { loading.value = false; } }
@@ -27,7 +28,6 @@ onMounted(refresh);
 function openCreate() { editingVoucher.value = null; modalOpen.value = true; }
 function openEdit(v: FinanceVoucher) { editingVoucher.value = v; modalOpen.value = true; }
 function openView(v: FinanceVoucher) { viewingVoucher.value = v; viewModalOpen.value = true; }
-function onSaved() { refresh(); }
 function onDeleted() { modalOpen.value = false; refresh(); }
 function onViewed() { viewModalOpen.value = false; refresh(); }
 function onSelectionChange(rows: FinanceVoucher[]) { selectedVouchers.value = rows; }
@@ -140,6 +140,34 @@ async function handleExport() {
   }
   exporting.value = false;
 }
+
+/* 批量操作 */
+async function handleBatchAudit() {
+  const draftIds = selectedVouchers.value.filter(v => v.status === 'draft').map(v => v.id);
+  if (draftIds.length === 0) { ElMessage.warning('选中的凭证中没有草稿状态，无法批量审核'); return; }
+  try {
+    await ElMessageBox.confirm(`确定批量审核 ${draftIds.length} 张草稿凭证？注意制单人与审核人不能为同一人。`, '批量审核', {
+      confirmButtonText: '批量审核', cancelButtonText: '取消', type: 'warning',
+    });
+    const result = await api.batchAuditVouchers(draftIds);
+    if (result.success > 0) ElMessage.success(`批量审核完成：成功 ${result.success} 张，失败 ${result.failed} 张`);
+    else ElMessage.warning(`批量审核：全部 ${result.failed} 张失败（可能是制单人和审核人相同）`);
+    refresh();
+  } catch { /* 取消 */ }
+}
+
+async function handleBatchPost() {
+  const auditedIds = selectedVouchers.value.filter(v => v.status === 'audited').map(v => v.id);
+  if (auditedIds.length === 0) { ElMessage.warning('选中的凭证中没有已审核状态，无法批量过账'); return; }
+  try {
+    await ElMessageBox.confirm(`确定批量过账 ${auditedIds.length} 张已审核凭证？`, '批量过账', {
+      confirmButtonText: '批量过账', cancelButtonText: '取消', type: 'warning',
+    });
+    const result = await api.batchPostVouchers(auditedIds);
+    ElMessage.success(`批量过账完成：成功 ${result.success} 张，失败 ${result.failed} 张`);
+    refresh();
+  } catch { /* 取消 */ }
+}
 </script>
 
 <template>
@@ -151,6 +179,12 @@ async function handleExport() {
       </div>
       <div style="display:flex;gap:8px">
         <el-button @click="handleReorder"><el-icon><TrendCharts /></el-icon>整理断号</el-button>
+        <el-button type="warning" :disabled="!selectedVouchers.some(v=>v.status==='draft')" @click="handleBatchAudit">
+          <el-icon><TrendCharts /></el-icon>批量审核{{ selectedVouchers.filter(v=>v.status==='draft').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='draft').length})` : '' }}
+        </el-button>
+        <el-button type="primary" :disabled="!selectedVouchers.some(v=>v.status==='audited')" @click="handleBatchPost">
+          批量过账{{ selectedVouchers.filter(v=>v.status==='audited').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='audited').length})` : '' }}
+        </el-button>
         <el-button type="success" :loading="exporting" :disabled="selectedVouchers.length === 0" @click="handleExport">
           <el-icon><Download /></el-icon>导出PNG{{ selectedVouchers.length > 0 ? `(${selectedVouchers.length})` : '' }}
         </el-button>
@@ -160,7 +194,7 @@ async function handleExport() {
     </div>
 
     <div class="panel">
-      <VoucherListTable :data="vouchers" :loading="loading" :show-selection="true" :show-amounts="true" @selection-change="onSelectionChange">
+      <VoucherListTable :data="vouchers" :loading="loading" :show-selection="true" :show-amounts="true" :selected-ids="selectedVoucherIds" @selection-change="onSelectionChange">
         <template #suffix-columns>
           <el-table-column label="操作" width="250">
             <template #default="{ row }">
@@ -187,7 +221,7 @@ async function handleExport() {
       v-model:open="modalOpen"
       :voucher="editingVoucher"
       :voucher-list="vouchers"
-      @saved="onSaved"
+      @saved="refresh"
       @deleted="onDeleted"
       @navigate="editingVoucher = $event"
       @switch-to-create="editingVoucher = null"
@@ -240,15 +274,9 @@ async function handleExport() {
 .panel :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-tr-bg-color: #fafbfc;
-  --el-table-row-hover-bg-color: #f3f6f9;
 }
 
-.panel :deep(.el-table__body tr) {
-  background-color: #fafbfc;
-}
 .panel :deep(.el-table__body tr:hover > td) {
-  background-color: #f3f6f9 !important;
   border-bottom-color: var(--epp-line-light) !important;
 }
 
@@ -256,9 +284,20 @@ async function handleExport() {
   border-bottom: 1px solid var(--epp-line-light);
 }
 
+/* 勾选行高亮 — 与科目列表颜色一致 */
+.panel :deep(.el-table__body tr.selected-row > td.el-table__cell) {
+  background: #e6eaef !important;
+}
+
 /* 按钮行间距 */
 .page-header :deep(.el-button--success) {
   --el-button-bg-color: #10b981;
   --el-button-border-color: #10b981;
+}
+
+/* 确保禁用态按钮仍然可辨读 */
+.page-header :deep(.el-button.is-disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

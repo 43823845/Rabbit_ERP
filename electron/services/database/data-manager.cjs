@@ -68,6 +68,43 @@ function applyDataManagerMethods(FinanceDatabase) {
   };
 
   /**
+   * 查询操作日志
+   */
+  proto.getOperationLogs = function (filter) {
+    if (!this.db) return [];
+    this._ensureBookId();
+
+    let sql = `SELECT l.id, l.action, l.detail, l.operator, l.created_at
+                FROM sys_operation_log l
+                WHERE l.book_id = ?
+               `;
+    const params = [this.currentBookId];
+
+    if (filter) {
+      if (filter.startDate) { sql += ' AND l.created_at >= ?'; params.push(filter.startDate); }
+      if (filter.endDate) { sql += ' AND l.created_at <= ?'; params.push(filter.endDate + 'T23:59:59'); }
+    }
+
+    sql += ' ORDER BY l.id DESC';
+
+    if (filter && filter.limit && filter.limit > 0) {
+      sql += ' LIMIT ?';
+      params.push(filter.limit);
+    }
+
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.map(r => ({
+      id: r.id,
+      userId: 0,
+      username: r.operator,
+      action: r.action,
+      target: '',
+      detail: r.detail,
+      createdAt: r.created_at,
+    }));
+  };
+
+  /**
    * 导出所有数据为 JSON
    */
   proto.exportAllData = function () {

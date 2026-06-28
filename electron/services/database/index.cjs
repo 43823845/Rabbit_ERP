@@ -18,6 +18,8 @@ const { applyAttachmentMethods } = require('./attachments.cjs');
 const { applyVoucherWordMethods } = require('./voucher-words.cjs');
 const { applyMultiColumnMethods } = require('./multi-column.cjs');
 const { applyDataManagerMethods } = require('./data-manager.cjs');
+const { applyTemplateMethods } = require('./templates.cjs');
+const { applySummaryMethods } = require('./summaries.cjs');
 
 let Database;
 try {
@@ -113,5 +115,7 @@ applyAttachmentMethods(FinanceDatabase);
 applyVoucherWordMethods(FinanceDatabase);
 applyMultiColumnMethods(FinanceDatabase);
 applyDataManagerMethods(FinanceDatabase);
+applyTemplateMethods(FinanceDatabase);
+applySummaryMethods(FinanceDatabase);
 
 module.exports = { FinanceDatabase, validateVoucher: require('./utils.cjs').validateVoucher };

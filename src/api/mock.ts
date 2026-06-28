@@ -150,6 +150,9 @@ interface Store {
   auxProjectValues: AuxProjectValue[];
   multiColumnSchemes: MultiColumnScheme[];
   voucherWords: VoucherWordType[];
+  opLogs: { id: number; userId: number; username: string; action: string; target: string; detail: string; createdAt: string }[];
+  voucherTemplates: { id: number; name: string; entries: string; shareType: string; createdAt: string }[];
+  voucherSummaries: { id: number; text: string; category: string; createdAt: string }[];
 }
 
 export class MockFinanceApi implements FinanceApi {
@@ -189,6 +192,9 @@ export class MockFinanceApi implements FinanceApi {
           auxProjectValues: parsed.auxProjectValues || [],
           multiColumnSchemes: parsed.multiColumnSchemes || [],
           voucherWords: parsed.voucherWords || [],
+          opLogs: parsed.opLogs || [],
+          voucherTemplates: parsed.voucherTemplates || [],
+          voucherSummaries: parsed.voucherSummaries || [],
         };
         return;
       } catch (e) { console.warn('[MockApi] 解析持久化数据失败:', e); }
@@ -216,6 +222,9 @@ export class MockFinanceApi implements FinanceApi {
       auxProjectValues: [],
       multiColumnSchemes: [],
       voucherWords: [],
+      opLogs: [],
+      voucherTemplates: [],
+      voucherSummaries: [],
     };
   }
 
@@ -230,6 +239,10 @@ export class MockFinanceApi implements FinanceApi {
       auxProjectTypes: this.store.auxProjectTypes,
       auxProjectValues: this.store.auxProjectValues,
       multiColumnSchemes: this.store.multiColumnSchemes,
+      voucherWords: this.store.voucherWords,
+      opLogs: this.store.opLogs,
+      voucherTemplates: this.store.voucherTemplates,
+      voucherSummaries: this.store.voucherSummaries,
     }));
   }
 
@@ -329,6 +342,43 @@ export class MockFinanceApi implements FinanceApi {
     return null;
   }
 
+  private getCachedUsername(): string {
+    try {
+      const raw = localStorage.getItem('finance_auth_state');
+      if (raw) { const state = JSON.parse(raw); return state.user?.username || state.user?.alias || 'system'; }
+    } catch (e) { return 'system'; }
+    return 'system';
+  }
+
+  private getCachedUserRole(): string {
+    try {
+      const raw = localStorage.getItem('finance_auth_state');
+      if (raw) { const state = JSON.parse(raw); return state.user?.role || 'viewer'; }
+    } catch (e) { return 'viewer'; }
+    return 'viewer';
+  }
+
+  /** 记录操作日志 */
+  private logOperation(action: string, target: string, detail: string) {
+    const userId = this.getCachedUserId() || 0;
+    const username = this.getCachedUsername();
+    const entry = {
+      id: this.store.opLogs.length > 0 ? Math.max(...this.store.opLogs.map(l => l.id)) + 1 : 1,
+      userId,
+      username,
+      action,
+      target,
+      detail,
+      createdAt: new Date().toISOString(),
+    };
+    this.store.opLogs.unshift(entry);
+    // 保留最近 500 条日志
+    if (this.store.opLogs.length > 500) {
+      this.store.opLogs = this.store.opLogs.slice(0, 500);
+    }
+    this.save();
+  }
+
   async getCompanies(): Promise<Company[]> { return this.getCompaniesSync(); }
 
   async createCompany(name: string, data?: Partial<Company>): Promise<Company> {
@@ -360,6 +410,11 @@ export class MockFinanceApi implements FinanceApi {
         { id: 5, book_id: 1, code: 'EMPLOYEE', name: '职员', created_at: new Date().toISOString() },
       ],
       auxProjectValues: [],
+      multiColumnSchemes: [],
+      voucherWords: [],
+      opLogs: [],
+      voucherTemplates: [],
+      voucherSummaries: [],
     };
     localStorage.setItem(key, JSON.stringify(store));
   }
@@ -487,6 +542,7 @@ export class MockFinanceApi implements FinanceApi {
     this._carryForwardProfit(period);
 
     this.store.periods[idx].status = 'closed'; this.save();
+    this.logOperation('期末结账', `期间 ${period}`, `执行期间 ${period} 结账，自动生成损益结转凭证`);
   }
 
   /** 损益结转：生成结转凭证 */
@@ -684,7 +740,9 @@ export class MockFinanceApi implements FinanceApi {
         line_no: i + 1,
       })),
     };
-    this.store.vouchers.unshift(v); this.save(); return v;
+    this.store.vouchers.unshift(v); this.save();
+    this.logOperation('创建凭证', `凭证 ${v.voucher_word}-${v.voucher_no}`, `创建凭证「${v.remark}」`);
+    return v;
   }
   async updateVoucher(p: VoucherPayload): Promise<FinanceVoucher & { __error?: string }> {
     const idx = this.store.vouchers.findIndex(v => v.id === p.id);
@@ -703,12 +761,24 @@ export class MockFinanceApi implements FinanceApi {
     };
     this.save(); return this.store.vouchers[idx];
   }
-  async deleteVoucher(id: number) { this.store.vouchers = this.store.vouchers.filter(v => v.id !== id); this.save(); }
+  async deleteVoucher(id: number) {
+    const v = this.store.vouchers.find(x => x.id === id);
+    if (v) this.logOperation('删除凭证', `凭证 ${v.voucher_word}-${v.voucher_no}`, `删除凭证「${v.remark || v.voucher_word + '-' + v.voucher_no}」`);
+    this.store.vouchers = this.store.vouchers.filter(v => v.id !== id); this.save();
+  }
 
   async auditVoucher(id: number): Promise<FinanceVoucher & { __error?: string }> {
     const v = this.store.vouchers.find(x => x.id === id);
     if (!v || v.status !== 'draft') return { id: 0, period: '', voucher_word: '', voucher_no: 0, voucher_date: '', remark: '', status: 'draft', maker: '', entries: [], __error: '仅草稿状态可审核' };
-    v.status = 'audited'; this.save(); return v;
+    const currentUser = this.getCachedUsername();
+    const userRole = this.getCachedUserRole();
+    // 审核分离：制单人不可审核自己的凭证（管理员除外，适配单人使用场景）
+    if (v.maker === currentUser && userRole !== 'admin') {
+      return { id: 0, period: '', voucher_word: '', voucher_no: 0, voucher_date: '', remark: '', status: 'draft', maker: '', entries: [], __error: '制单人与审核人不能为同一人，请由其他用户审核' };
+    }
+    v.status = 'audited'; this.save();
+    this.logOperation('审核', `凭证 ${v.voucher_word}-${v.voucher_no}`, `审核凭证 ${v.remark || v.voucher_word + '-' + v.voucher_no}`);
+    return v;
   }
   async unauditVoucher(id: number): Promise<FinanceVoucher & { __error?: string }> {
     const v = this.store.vouchers.find(x => x.id === id);
@@ -718,7 +788,9 @@ export class MockFinanceApi implements FinanceApi {
   async postVoucher(id: number): Promise<FinanceVoucher & { __error?: string }> {
     const v = this.store.vouchers.find(x => x.id === id);
     if (!v || v.status !== 'audited') return { id: 0, period: '', voucher_word: '', voucher_no: 0, voucher_date: '', remark: '', status: 'draft', maker: '', entries: [], __error: '仅已审核状态可过账' };
-    v.status = 'posted'; this.save(); return v;
+    v.status = 'posted'; this.save();
+    this.logOperation('过账', `凭证 ${v.voucher_word}-${v.voucher_no}`, `过账凭证 ${v.remark || v.voucher_word + '-' + v.voucher_no}`);
+    return v;
   }
   async unpostVoucher(id: number): Promise<FinanceVoucher & { __error?: string }> {
     const v = this.store.vouchers.find(x => x.id === id);
@@ -1496,6 +1568,9 @@ export class MockFinanceApi implements FinanceApi {
       gl_opening_balance: store.openings?.length || 0,
       aux_project_type: store.auxProjectTypes?.length || 0,
       aux_project_value: store.auxProjectValues?.length || 0,
+      op_logs: store.opLogs?.length || 0,
+      voucher_templates: store.voucherTemplates?.length || 0,
+      voucher_summaries: store.voucherSummaries?.length || 0,
     };
     return { dbPath: 'localStorage (浏览器模式)', dbSize: 0, pageCount: 0, freelistCount: 0, tableCounts, isMock: true };
   }
@@ -1536,5 +1611,113 @@ export class MockFinanceApi implements FinanceApi {
     a.click();
     URL.revokeObjectURL(url);
     return { success: true };
+  }
+
+  /* ---- 批量操作 ---- */
+  async batchAuditVouchers(ids: number[]): Promise<{ success: number; failed: number }> {
+    let success = 0, failed = 0;
+    const currentUser = this.getCachedUsername();
+    const userRole = this.getCachedUserRole();
+    for (const id of ids) {
+      const v = this.store.vouchers.find(x => x.id === id);
+      if (!v || v.status !== 'draft') { failed++; continue; }
+      // 审核分离：管理员可绕过限制
+      if (v.maker === currentUser && userRole !== 'admin') { failed++; continue; }
+      v.status = 'audited';
+      this.logOperation('批量审核', `凭证 ${v.voucher_word}-${v.voucher_no}`, `批量审核凭证`);
+      success++;
+    }
+    if (success > 0) this.save();
+    return { success, failed };
+  }
+
+  async batchPostVouchers(ids: number[]): Promise<{ success: number; failed: number }> {
+    let success = 0, failed = 0;
+    for (const id of ids) {
+      const v = this.store.vouchers.find(x => x.id === id);
+      if (!v || v.status !== 'audited') { failed++; continue; }
+      v.status = 'posted';
+      this.logOperation('批量过账', `凭证 ${v.voucher_word}-${v.voucher_no}`, `批量过账凭证`);
+      success++;
+    }
+    if (success > 0) this.save();
+    return { success, failed };
+  }
+
+  /* ---- 操作日志 ---- */
+  async getOperationLogs(filter?: { startDate?: string; endDate?: string; limit?: number }): Promise<import('../vite-env').OpLogEntry[]> {
+    let logs = [...this.store.opLogs];
+    if (filter?.startDate) logs = logs.filter(l => l.createdAt >= filter.startDate!);
+    if (filter?.endDate) logs = logs.filter(l => l.createdAt <= filter.endDate! + 'T23:59:59');
+    if (filter?.limit && filter.limit > 0) logs = logs.slice(0, filter.limit);
+    return logs;
+  }
+
+  /* ---- 科目引用检查 ---- */
+  async checkSubjectUsage(code: string): Promise<{ voucherCount: number; hasChildren: boolean }> {
+    const voucherCount = this.store.vouchers.reduce((count, v) => {
+      return count + v.entries.filter(e => e.subjectCode === code).length;
+    }, 0);
+    const hasChildren = this.store.subjects.some(s => s.parent_code === code);
+    return { voucherCount, hasChildren };
+  }
+
+  /* ---- 凭证模板 ---- */
+  async listVoucherTemplates(): Promise<import('../vite-env').VoucherTemplate[]> {
+    return [...this.store.voucherTemplates].sort((a, b) => b.id - a.id);
+  }
+
+  async saveVoucherTemplate(name: string, entries: Array<{ summary: string; subjectCode: string; subjectName: string }>): Promise<import('../vite-env').VoucherTemplate> {
+    const id = this.store.voucherTemplates.length > 0
+      ? Math.max(...this.store.voucherTemplates.map(t => t.id)) + 1
+      : 1;
+    const template: import('../vite-env').VoucherTemplate = {
+      id, name,
+      entries: JSON.parse(JSON.stringify(entries)),
+      shareType: 'personal',
+      createdAt: new Date().toISOString(),
+    };
+    this.store.voucherTemplates.unshift(template);
+    this.logOperation('创建模板', `凭证模板 ${name}`, `创建凭证模板「${name}」`);
+    this.save();
+    return template;
+  }
+
+  async deleteVoucherTemplate(id: number): Promise<void> {
+    const idx = this.store.voucherTemplates.findIndex(t => t.id === id);
+    if (idx < 0) throw new Error('模板不存在');
+    const name = this.store.voucherTemplates[idx].name;
+    this.store.voucherTemplates.splice(idx, 1);
+    this.logOperation('删除模板', `凭证模板 ${name}`, `删除凭证模板「${name}」`);
+    this.save();
+  }
+
+  /* ---- 摘要库 ---- */
+  async listVoucherSummaries(): Promise<import('../vite-env').VoucherSummary[]> {
+    return [...this.store.voucherSummaries].sort((a, b) => b.id - a.id);
+  }
+
+  async createVoucherSummary(text: string, category: string): Promise<import('../vite-env').VoucherSummary> {
+    if (!text.trim()) throw new Error('摘要内容不能为空');
+    const id = this.store.voucherSummaries.length > 0
+      ? Math.max(...this.store.voucherSummaries.map(s => s.id)) + 1
+      : 1;
+    const summary: import('../vite-env').VoucherSummary = {
+      id, text: text.trim(), category: category || '通用',
+      createdAt: new Date().toISOString(),
+    };
+    this.store.voucherSummaries.unshift(summary);
+    this.logOperation('添加摘要', `摘要「${text}」`, `添加常用摘要「${text}」`);
+    this.save();
+    return summary;
+  }
+
+  async deleteVoucherSummary(id: number): Promise<void> {
+    const idx = this.store.voucherSummaries.findIndex(s => s.id === id);
+    if (idx < 0) throw new Error('摘要不存在');
+    const text = this.store.voucherSummaries[idx].text;
+    this.store.voucherSummaries.splice(idx, 1);
+    this.logOperation('删除摘要', `摘要「${text}」`, `删除常用摘要「${text}」`);
+    this.save();
   }
 }

@@ -348,6 +348,26 @@ function registerIpc() {
   wrap('vacuumDatabase', () => database.vacuum());
   wrap('exportAllData', () => database.exportAllData());
 
+  /* 批量操作 */
+  wrap('batchAuditVouchers', (ids) => database.batchAuditVouchers(ids));
+  wrap('batchPostVouchers', (ids) => database.batchPostVouchers(ids));
+
+  /* 操作日志 */
+  wrap('getOperationLogs', (filter) => database.getOperationLogs(filter));
+
+  /* 科目引用检查 */
+  wrap('checkSubjectUsage', (code) => database.checkSubjectUsage(code));
+
+  /* 凭证模板 */
+  wrap('listVoucherTemplates', () => database.listVoucherTemplates());
+  wrap('saveVoucherTemplate', (p) => database.saveVoucherTemplate(p));
+  wrap('deleteVoucherTemplate', (id) => database.deleteVoucherTemplate(id));
+
+  /* 摘要库 */
+  wrap('listVoucherSummaries', () => database.listVoucherSummaries());
+  wrap('createVoucherSummary', (p) => database.createVoucherSummary(p));
+  wrap('deleteVoucherSummary', (id) => database.deleteVoucherSummary(id));
+
   ipcMain.handle('finance:backupDatabase', async () => {
     const { dialog } = require('electron');
     const mainWin = BrowserWindow.getFocusedWindow();

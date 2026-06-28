@@ -1,14 +1,16 @@
 <script setup lang="ts">
-// ponytail: 系统设置 — 基础信息/账套/用户/密码/期间管理
+// ponytail: 系统设置 — 基础信息/账套/凭证字/期间结账/用户/数据/系统
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   User, OfficeBuilding, Calendar, Setting, Plus, Edit,
   Lock, Tickets, FolderOpened, Download, RefreshRight, Coin,
+  View, Clock,
 } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import { useAuth } from '../auth';
-import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo } from '../api';
+import ClosingView from './ClosingView.vue';
+import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo, OpLogEntry } from '../api';
 
 const api = getFinanceApi();
 const auth = useAuth();
@@ -35,6 +37,7 @@ const navGroups: NavGroup[] = [
     label: '系统管理',
     items: [
       { key: 'users', label: '用户管理', icon: User, adminOnly: true },
+      { key: 'opLogs', label: '操作日志', icon: Clock },
       { key: 'dataManage', label: '数据管理', icon: FolderOpened },
       { key: 'system', label: '系统信息', icon: Setting },
     ],
@@ -43,8 +46,6 @@ const navGroups: NavGroup[] = [
 const company = ref<Company | null>(null);
 const companies = ref<Company[]>([]);
 const users = ref<SysUser[]>([]);
-/** 全年期间列表：强制补齐 1-12 月 */
-const allYearPeriods = ref<Array<{ period: string; status: string; exists: boolean }>>([]);
 const subjectsCount = ref(0);
 
 const currentUser = computed(() => auth.state.user);
@@ -72,27 +73,8 @@ onMounted(async () => {
     companies.value = cList;
     users.value = userList;
     subjectsCount.value = bootstrap.subjects?.length || 0;
-    // 补齐全年 12 个期间
-    buildYearPeriods(company.value?.period || '2026-06', bootstrap.periods || []);
   } finally { loading.value = false; }
 });
-
-/** 根据当前期间补齐全年 1-12 月 */
-function buildYearPeriods(currentPeriod: string, existing: Array<{ period: string; status: string }>) {
-  const match = currentPeriod.match(/^(\d{4})-/);
-  const year = match ? match[1] : '2026';
-  const result: typeof allYearPeriods.value = [];
-  for (let m = 1; m <= 12; m++) {
-    const p = `${year}-${String(m).padStart(2, '0')}`;
-    const found = existing.find(e => e.period === p);
-    result.push({
-      period: p,
-      status: found ? found.status : 'future',
-      exists: !!found,
-    });
-  }
-  allYearPeriods.value = result;
-}
 
 /* ---- 公司信息编辑（使用 reactive 确保 v-model 正常） ---- */
 const editingCompany = ref(false);
@@ -253,42 +235,6 @@ async function changePassword() {
   finally { savingPwd.value = false; }
 }
 
-/* ---- 期间管理 ---- */
-async function handleClosePeriod(period: string) {
-  try {
-    await ElMessageBox.confirm(
-      `确认关闭期间「${period}」？关闭后将无法新增/编辑该期间凭证。`,
-      '结账确认', { confirmButtonText: '确认结账', cancelButtonText: '取消', type: 'warning' },
-    );
-    await api.closePeriod(period);
-    await refreshPeriodData();
-    ElMessage.success(`期间「${period}」已关闭`);
-  } catch { /* 用户取消 */ }
-}
-
-async function handleReopenPeriod(period: string) {
-  try {
-    await ElMessageBox.confirm(
-      `确认重新打开期间「${period}」？`,
-      '反结账确认', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
-    );
-    await api.reopenPeriod(period);
-    await refreshPeriodData();
-    ElMessage.success(`期间「${period}」已重新打开`);
-  } catch { /* 用户取消 */ }
-}
-
-async function refreshPeriodData() {
-  const b = await api.bootstrap();
-  buildYearPeriods(company.value?.period || '2026-06', b.periods || []);
-}
-
-function periodStatusText(status: string) {
-  if (status === 'closed') return '已结账';
-  if (status === 'future') return '未开始';
-  return '进行中';
-}
-
 /* ---- 凭证字管理 ---- */
 const voucherWords = ref<VoucherWordType[]>([]);
 const vwLoading = ref(false);
@@ -353,7 +299,52 @@ async function handleSetDefaultVw(row: VoucherWordType) {
 watch(activeMenu, (key) => {
   if (key === 'voucherWords') loadVoucherWords();
   if (key === 'dataManage') loadDbInfo();
+  if (key === 'opLogs') loadOpLogs();
 });
+
+/* ---- 操作日志 ---- */
+const opLogs = ref<OpLogEntry[]>([]);
+const opLogsLoading = ref(false);
+const opLogDateRange = ref<string[]>([]);
+const opLogLimit = ref(100);
+
+async function loadOpLogs() {
+  opLogsLoading.value = true;
+  try {
+    const filter: { startDate?: string; endDate?: string; limit?: number } = { limit: opLogLimit.value };
+    if (opLogDateRange.value && opLogDateRange.value.length === 2) {
+      filter.startDate = opLogDateRange.value[0];
+      filter.endDate = opLogDateRange.value[1];
+    }
+    opLogs.value = await api.getOperationLogs(filter);
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '获取操作日志失败');
+  } finally { opLogsLoading.value = false; }
+}
+
+function resetOpLogFilter() {
+  opLogDateRange.value = [];
+  opLogLimit.value = 100;
+  loadOpLogs();
+}
+
+function actionLabel(action: string): string {
+  const map: Record<string, string> = {
+    '创建凭证': '创建', '删除凭证': '删除', '审核': '审核', '批量审核': '审核',
+    '过账': '过账', '批量过账': '过账', '创建模板': '模板', '删除模板': '模板',
+    '添加摘要': '摘要', '删除摘要': '摘要', '期末结账': '结账',
+  };
+  return map[action] || action;
+}
+
+function actionTagType(action: string): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
+  if (action.includes('创建') || action.includes('添加')) return 'success';
+  if (action.includes('删除')) return 'danger';
+  if (action.includes('审核')) return 'warning';
+  if (action.includes('过账')) return 'info';
+  if (action.includes('结账')) return 'success';
+  return 'primary';
+}
 
 /* ---- 数据管理 ---- */
 const dbInfo = ref<DatabaseInfo | null>(null);
@@ -429,8 +420,8 @@ function formatFileSize(bytes: number): string {
       <div class="sp-header-right">
         <span class="sp-user-badge">
           <el-icon><User /></el-icon>
-          {{ currentUser?.alias || currentUser?.username }}
-          <el-tag size="small" effect="plain" style="margin-left:6px">{{ roleLabel }}</el-tag>
+          {{ currentUser?.username || currentUser?.alias || '—' }}
+          <el-tag size="small" effect="dark" type="warning" style="margin-left:6px">{{ roleLabel }}</el-tag>
         </span>
       </div>
     </div>
@@ -598,31 +589,13 @@ function formatFileSize(bytes: number): string {
           </div>
         </div>
 
-        <!-- ===== 期间管理 ===== -->
+        <!-- ===== 期间管理（结账） ===== -->
         <div v-else-if="activeMenu === 'periods'" class="sp-panel">
           <div class="sp-panel-header">
             <div class="sp-panel-title-line"></div><span>全年会计期间</span>
-            <span class="sp-panel-subtitle">{{ allYearPeriods[0]?.period?.slice(0,4) || '' }} 年度</span>
           </div>
           <div class="sp-panel-body">
-            <div class="sp-period-grid">
-              <div v-for="row in allYearPeriods" :key="row.period" class="sp-period-card" :class="`sp-period-card--${row.status}`">
-                <div class="sp-pc-icon">
-                  <span v-if="row.status==='closed'" class="sp-pc-dot sp-pc-dot--closed">✓</span>
-                  <span v-else-if="row.status==='open'" class="sp-pc-dot sp-pc-dot--open"></span>
-                  <span v-else class="sp-pc-dot sp-pc-dot--future"></span>
-                </div>
-                <div class="sp-pc-label">{{ row.period.split('-')[1] }}月</div>
-                <div class="sp-pc-period">{{ row.period }}</div>
-                <div class="sp-pc-status" :class="`sp-pc-status--${row.status}`">{{ periodStatusText(row.status) }}</div>
-                <div v-if="row.exists&&row.status!=='closed'" class="sp-pc-action">
-                  <el-button type="warning" size="small" @click="handleClosePeriod(row.period)">结账</el-button>
-                </div>
-                <div v-else-if="row.exists&&row.status==='closed'" class="sp-pc-action">
-                  <el-button type="primary" size="small" plain @click="handleReopenPeriod(row.period)">反结账</el-button>
-                </div>
-              </div>
-            </div>
+            <ClosingView />
           </div>
         </div>
 
@@ -659,6 +632,76 @@ function formatFileSize(bytes: number): string {
                 </div>
               </div>
               <el-empty v-if="!users.length" description="暂无用户数据" :image-size="80" />
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 操作日志 ===== -->
+        <div v-else-if="activeMenu === 'opLogs'" class="sp-panel">
+          <div class="sp-panel-header">
+            <div class="sp-panel-title-line" style="background:var(--epp-accent)"></div>
+            <span>操作日志</span>
+            <span class="sp-panel-subtitle">记录系统关键操作，最多保留 500 条</span>
+          </div>
+          <div class="sp-panel-body">
+            <!-- 过滤栏 -->
+            <div class="oplog-filter">
+              <div class="oplog-filter-left">
+                <el-date-picker
+                  v-model="opLogDateRange"
+                  type="daterange"
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                  size="small"
+                  format="YYYY-MM-DD"
+                  value-format="YYYY-MM-DD"
+                  style="width:260px"
+                  :clearable="true"
+                  @change="loadOpLogs"
+                />
+                <el-select v-model="opLogLimit" size="small" style="width:110px" @change="loadOpLogs">
+                  <el-option :value="30" label="最近30条" />
+                  <el-option :value="50" label="最近50条" />
+                  <el-option :value="100" label="最近100条" />
+                  <el-option :value="200" label="最近200条" />
+                </el-select>
+              </div>
+              <div class="oplog-filter-right">
+                <el-button size="small" text @click="resetOpLogFilter"><el-icon><RefreshRight /></el-icon>重置</el-button>
+                <span class="oplog-count">共 {{ opLogs.length }} 条</span>
+              </div>
+            </div>
+
+            <!-- 日志列表 -->
+            <div class="oplog-list" v-loading="opLogsLoading">
+              <div v-for="log in opLogs" :key="log.id" class="oplog-item">
+                <div class="oplog-icon">
+                  <el-icon :size="18">
+                    <Clock v-if="log.action.includes('结账')" />
+                    <Edit v-else-if="log.action.includes('创建') || log.action.includes('添加')" />
+                    <View v-else-if="log.action.includes('审核')" />
+                    <Download v-else-if="log.action.includes('过账')" />
+                    <Tickets v-else />
+                  </el-icon>
+                </div>
+                <div class="oplog-body">
+                  <div class="oplog-line1">
+                    <el-tag :type="actionTagType(log.action)" size="small" effect="plain" disable-transitions>
+                      {{ actionLabel(log.action) }}
+                    </el-tag>
+                    <span class="oplog-target">{{ log.target }}</span>
+                  </div>
+                  <div class="oplog-line2">
+                    <span class="oplog-detail">{{ log.detail }}</span>
+                    <span class="oplog-sep">·</span>
+                    <span class="oplog-user">{{ log.username }}</span>
+                    <span class="oplog-sep">·</span>
+                    <span class="oplog-time">{{ log.createdAt.replace('T', ' ').substring(0, 19) }}</span>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-if="!opLogs.length && !opLogsLoading" description="暂无操作日志" :image-size="60" />
             </div>
           </div>
         </div>
@@ -833,15 +876,8 @@ function formatFileSize(bytes: number): string {
    记忆锚点：统计卡片左侧金边竖条 + 面板标题账簿分隔线
    ================================================================ */
 
-/* ---- CSS 变量（局部作用域） ---- */
+/* ---- CSS 变量（局部重写，仅覆盖与全局不同的值） ---- */
 .settings-page {
-  --epp-ink: #0f172a;
-  --epp-gold: #0891b2;
-  --epp-gold-light: #06b6d4;
-  --epp-ledger: #f1f5f9;
-  --epp-paper: #ffffff;
-  --epp-ink-text: #0f172a;
-  --epp-ink-sub: #64748b;
   --epp-line: #e2e8f0;
   --epp-line-light: #f1f5f9;
   --epp-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
@@ -1279,115 +1315,6 @@ function formatFileSize(bytes: number): string {
 }
 
 /* ================================================================
-   期间管理卡片网格
-   ================================================================ */
-.sp-period-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr));
-  gap: 10px;
-}
-
-.sp-period-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 18px 12px 14px;
-  border: 1px solid var(--epp-line-light);
-  border-radius: 6px;
-  background: var(--epp-paper);
-  transition: all 0.2s;
-  user-select: none;
-}
-
-.sp-period-card--open {
-  border-color: var(--epp-accent-light);
-  background: linear-gradient(180deg, #f0fdfa 0%, var(--epp-paper) 100%);
-}
-
-.sp-period-card--closed {
-  background: #f8fafc;
-}
-
-.sp-period-card--future {
-  opacity: 0.5;
-  border-style: dashed;
-}
-
-.sp-pc-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.sp-pc-dot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-}
-
-.sp-pc-dot--open {
-  background: #f0fdfa;
-  border: 2px solid var(--epp-accent-light);
-}
-
-.sp-pc-dot--closed {
-  background: var(--epp-success);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.sp-pc-dot--future {
-  background: #f1f5f9;
-  border: 2px dashed var(--epp-line-light);
-}
-
-.sp-pc-label {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--epp-ink-text);
-}
-
-.sp-period-card--future .sp-pc-label {
-  color: var(--epp-ink-sub);
-}
-
-.sp-pc-period {
-  font-size: 11px;
-  color: var(--epp-ink-sub);
-}
-
-.sp-pc-status {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 8px;
-  border-radius: 10px;
-}
-
-.sp-pc-status--open {
-  color: var(--epp-accent);
-  background: #ecfeff;
-}
-
-.sp-pc-status--closed {
-  color: var(--epp-success);
-  background: #ecfdf5;
-}
-
-.sp-pc-status--future {
-  color: var(--epp-ink-sub);
-  background: #f1f5f9;
-}
-
-.sp-pc-action {
-  margin-top: 4px;
-}
-
-/* ================================================================
    数据管理页
    ================================================================ */
 .sp-data-grid {
@@ -1785,6 +1712,102 @@ function formatFileSize(bytes: number): string {
 .sp-company-form :deep(.el-input__inner:focus) {
   border-color: var(--epp-accent);
   box-shadow: 0 0 0 1px rgba(8, 145, 178, 0.15);
+}
+
+/* ---- 操作日志面板 ---- */
+.oplog-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 4px;
+  border: 1px solid var(--epp-line-light);
+  flex-wrap: wrap;
+}
+.oplog-filter-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.oplog-filter-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.oplog-count {
+  font-size: 12px;
+  color: var(--epp-ink-sub);
+  font-weight: 500;
+}
+
+.oplog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+.oplog-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.oplog-item:hover {
+  background: #f8fafc;
+  border-color: var(--epp-line-light);
+}
+.oplog-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--epp-ink-sub);
+}
+.oplog-body {
+  flex: 1;
+  min-width: 0;
+}
+.oplog-line1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.oplog-target {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--epp-ink-text);
+}
+.oplog-line2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--epp-ink-sub);
+  flex-wrap: wrap;
+}
+.oplog-user {
+  font-weight: 500;
+}
+.oplog-time {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11px;
+}
+.oplog-sep {
+  color: #cbd5e1;
 }
 
 /* ---- 响应式：窄屏折叠为单列 ---- */

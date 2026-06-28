@@ -575,15 +575,17 @@ function catTag(c: string) { return catTagMap[c] || 'info'; }
 .name-prefix-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0 8px;
-  font-size: 12px;
+  justify-content: center;
+  padding: 0 10px;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--epp-ink-sub);
+  color: var(--epp-ink);
   font-variant-numeric: tabular-nums;
-  background: #eef3f8;
-  border-radius: 3px;
-  height: 22px;
-  margin-right: 4px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  background: transparent;
+  border-right: 1px solid var(--epp-line-light);
+  height: 100%;
+  letter-spacing: 0.5px;
 }
 
 /* ---- 属性分组面板 ---- */

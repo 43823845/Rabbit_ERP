@@ -120,6 +120,34 @@ function applySubjectMethods(FinanceDatabase) {
   };
 
   /**
+   * 检查科目是否被引用（删除前安全检查）
+   */
+  proto.checkSubjectUsage = function (code) {
+    if (!this.db) {
+      const voucherCount = this.memory.vouchers.reduce((c, v) =>
+        c + v.entries.filter(e => e.subjectCode === code).length, 0
+      );
+      const hasChildren = this.memory.subjects.some(s => s.parent_code === code);
+      return { voucherCount, hasChildren };
+    }
+    this._ensureBookId();
+
+    const refEntry = this.db.prepare(
+      `SELECT COUNT(*) as cnt FROM gl_voucher_entry e
+       JOIN gl_voucher v ON v.id = e.voucher_id
+       WHERE v.book_id = ? AND e.subject_code = ?`
+    ).get(this.currentBookId, code);
+    const voucherCount = refEntry ? refEntry.cnt : 0;
+
+    const children = this.db.prepare(
+      'SELECT COUNT(*) as cnt FROM bd_subject WHERE book_id = ? AND parent_code = ?'
+    ).get(this.currentBookId, code);
+    const hasChildren = !!(children && children.cnt > 0);
+
+    return { voucherCount, hasChildren };
+  };
+
+  /**
    * 科目按类别与层级重新编号
    */
   proto.renumberSubjects = function () {

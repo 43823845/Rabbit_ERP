@@ -4,7 +4,7 @@
  *
  * 职责：凭证分页列表展示、支持搜索关键词高亮、金额分格显示、操作按钮列
  */
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { FinanceVoucher } from '../api';
 
 const tableRef = ref();
@@ -21,6 +21,8 @@ const props = withDefaults(defineProps<{
   showEntryCount?: boolean;
   /** 是否显示选择框 */
   showSelection?: boolean;
+  /** 选中行 ID 集合（勾选高亮） */
+  selectedIds?: Set<number>;
 }>(), {
   loading: false,
   highlightRow: false,
@@ -28,6 +30,7 @@ const props = withDefaults(defineProps<{
   showAmounts: false,
   showEntryCount: false,
   showSelection: false,
+  selectedIds: () => new Set(),
 });
 
 const emit = defineEmits<{
@@ -56,10 +59,17 @@ function entryTotal(v: FinanceVoucher, side: 'debit' | 'credit'): number {
 const statusColors: Record<string, string> = { draft: 'info', audited: 'warning', posted: 'success' };
 const statusLabels: Record<string, string> = { draft: '草稿', audited: '已审核', posted: '已过账' };
 
-function rowClassName({ row }: { row: FinanceVoucher }): string {
-  if (props.highlightRow && row.id === props.highlightRowId) return 'search-highlight-row';
-  return '';
-}
+// ponytail: computed 返回函数确保 selectedIds 变化时 row-class-name 引用更新
+const rowClassName = computed(() => {
+  const ids = props.selectedIds;
+  const hid = props.highlightRowId;
+  const hr = props.highlightRow;
+  return ({ row }: { row: FinanceVoucher }): string => {
+    if (hr && row.id === hid) return 'search-highlight-row';
+    if (ids.has(row.id)) return 'selected-row';
+    return '';
+  };
+});
 </script>
 
 <template>

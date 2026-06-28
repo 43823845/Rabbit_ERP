@@ -175,4 +175,24 @@ export class ElectronFinanceApi implements FinanceApi {
   async backupDatabase(): Promise<any> { return ipc('backupDatabase'); }
   async exportAllData(): Promise<any> { return ipc('exportAllData'); }
   async exportDataJson(): Promise<any> { return ipc('exportDataJson'); }
+
+  /* 批量操作 */
+  async batchAuditVouchers(ids: number[]): Promise<{ success: number; failed: number }> { return ipc('batchAuditVouchers', ids); }
+  async batchPostVouchers(ids: number[]): Promise<{ success: number; failed: number }> { return ipc('batchPostVouchers', ids); }
+
+  /* 操作日志 */
+  async getOperationLogs(filter?: { startDate?: string; endDate?: string; limit?: number }): Promise<import('../vite-env').OpLogEntry[]> { return ipc('getOperationLogs', filter); }
+
+  /* 科目引用检查 */
+  async checkSubjectUsage(code: string): Promise<{ voucherCount: number; hasChildren: boolean }> { return ipc('checkSubjectUsage', code); }
+
+  /* 凭证模板 */
+  async listVoucherTemplates(): Promise<import('../vite-env').VoucherTemplate[]> { return ipc('listVoucherTemplates'); }
+  async saveVoucherTemplate(name: string, entries: Array<{ summary: string; subjectCode: string; subjectName: string }>): Promise<import('../vite-env').VoucherTemplate> { return ipc('saveVoucherTemplate', { name, entries }); }
+  async deleteVoucherTemplate(id: number): Promise<void> { return ipc('deleteVoucherTemplate', id); }
+
+  /* 摘要库 */
+  async listVoucherSummaries(): Promise<import('../vite-env').VoucherSummary[]> { return ipc('listVoucherSummaries'); }
+  async createVoucherSummary(text: string, category: string): Promise<import('../vite-env').VoucherSummary> { return ipc('createVoucherSummary', { text, category }); }
+  async deleteVoucherSummary(id: number): Promise<void> { return ipc('deleteVoucherSummary', id); }
 }

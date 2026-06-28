@@ -225,6 +225,56 @@ function applyVoucherMethods(FinanceDatabase) {
   proto.unpostVoucher = function (id) { return this._changeVoucherStatus(id, 'posted', 'audited', '仅已过账状态可反过账', 'unpost_voucher'); };
 
   /**
+   * 批量审核凭证
+   */
+  proto.batchAuditVouchers = function (ids) {
+    if (!this.db) return { success: 0, failed: ids.length };
+    this._ensureBookId();
+    let success = 0, failed = 0;
+    const self = this;
+    const tx = this.db.transaction(() => {
+      const stmt = self.db.prepare('UPDATE gl_voucher SET status = ? WHERE id = ? AND status = ? AND book_id = ?');
+      for (const id of ids) {
+        const result = stmt.run('audited', id, 'draft', self.currentBookId);
+        if (result.changes > 0) {
+          success++;
+          const v = self.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
+          if (v) self._log('audit_voucher', `凭证 ${v.voucher_word}-${v.voucher_no}`);
+        } else {
+          failed++;
+        }
+      }
+    });
+    tx();
+    return { success, failed };
+  };
+
+  /**
+   * 批量过账凭证
+   */
+  proto.batchPostVouchers = function (ids) {
+    if (!this.db) return { success: 0, failed: ids.length };
+    this._ensureBookId();
+    let success = 0, failed = 0;
+    const self = this;
+    const tx = this.db.transaction(() => {
+      const stmt = self.db.prepare('UPDATE gl_voucher SET status = ? WHERE id = ? AND status = ? AND book_id = ?');
+      for (const id of ids) {
+        const result = stmt.run('posted', id, 'audited', self.currentBookId);
+        if (result.changes > 0) {
+          success++;
+          const v = self.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
+          if (v) self._log('post_voucher', `凭证 ${v.voucher_word}-${v.voucher_no}`);
+        } else {
+          failed++;
+        }
+      }
+    });
+    tx();
+    return { success, failed };
+  };
+
+  /**
    * 重排凭证编号（单个凭证字）
    */
   proto.reorderVoucherNos = function (voucherWord, period) {

@@ -416,6 +416,34 @@ export interface VoucherWordPayload {
   isDefault?: number;
 }
 
+/* ---- 操作日志 ---- */
+export interface OpLogEntry {
+  id: number;
+  userId: number;
+  username: string;
+  action: string;
+  target: string;
+  detail: string;
+  createdAt: string;
+}
+
+/* ---- 凭证模板 ---- */
+export interface VoucherTemplate {
+  id: number;
+  name: string;
+  entries: Array<{ summary: string; subjectCode: string; subjectName: string }>;
+  shareType: 'personal' | 'shared';
+  createdAt: string;
+}
+
+/* ---- 摘要库 ---- */
+export interface VoucherSummary {
+  id: number;
+  text: string;
+  category: string;
+  createdAt: string;
+}
+
 /* ---- 数据管理 ---- */
 export interface DatabaseInfo {
   dbPath: string;
@@ -545,6 +573,26 @@ export interface FinanceApi {
   backupDatabase(): Promise<{ success?: boolean; canceled?: boolean; path?: string; __error?: string }>;
   exportAllData(): Promise<any>;
   exportDataJson(): Promise<{ success?: boolean; canceled?: boolean; path?: string; __error?: string }>;
+
+  /* 批量操作 */
+  batchAuditVouchers(ids: number[]): Promise<{ success: number; failed: number }>;
+  batchPostVouchers(ids: number[]): Promise<{ success: number; failed: number }>;
+
+  /* 操作日志 */
+  getOperationLogs(filter?: { startDate?: string; endDate?: string; limit?: number }): Promise<OpLogEntry[]>;
+
+  /* 科目引用检查 */
+  checkSubjectUsage(code: string): Promise<{ voucherCount: number; hasChildren: boolean }>;
+
+  /* 凭证模板 */
+  listVoucherTemplates(): Promise<VoucherTemplate[]>;
+  saveVoucherTemplate(name: string, entries: Array<{ summary: string; subjectCode: string; subjectName: string }>): Promise<VoucherTemplate>;
+  deleteVoucherTemplate(id: number): Promise<void>;
+
+  /* 摘要库 */
+  listVoucherSummaries(): Promise<VoucherSummary[]>;
+  createVoucherSummary(text: string, category: string): Promise<VoucherSummary>;
+  deleteVoucherSummary(id: number): Promise<void>;
 }
 
 declare global {

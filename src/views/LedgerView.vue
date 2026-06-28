@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ponytail: 账簿查询 — 明细账/总账/余额表/多栏账/数量金额/核算项目
-import { onMounted, ref, computed, watch } from 'vue';
+import { onMounted, ref, shallowRef, computed, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { getFinanceApi } from '../api';
 import type { SubjectBalance, FinanceSubject, MultiColumnLedgerResult, MultiColumnLedgerRow,
@@ -65,14 +65,16 @@ const bookGroups: Record<BookCategory, { title: string; items: BookItem[] }> = {
   },
 };
 
-const activeCategory = ref<BookCategory>('main');
 const activeBook = ref('detail');
 
-/* 当前选中的账簿信息 */
-const currentBookLabel = computed(() => {
-  const items = [...bookGroups.main.items, ...bookGroups.aux.items];
-  return items.find(i => i.key === activeBook.value)?.label || '明细账';
-});
+// ponytail: 扁平化所有账簿项，供单行Tab渲染
+const allBookItems = computed(() => [
+  ...bookGroups.main.items, ...bookGroups.aux.items,
+]);
+
+const currentBookLabel = computed(() =>
+  allBookItems.value.find(i => i.key === activeBook.value)?.label || '明细账'
+);
 
 /* 科目余额表数据 */
 interface BalanceDisplayRow extends SubjectBalance {
@@ -80,7 +82,7 @@ interface BalanceDisplayRow extends SubjectBalance {
   openingBalance: number;
   endingBalance: number;
 }
-const balanceListRaw = ref<SubjectBalance[]>([]);
+const balanceListRaw = shallowRef<SubjectBalance[]>([]);
 const balanceOpeningMap = ref<Map<string, { debit: number; credit: number }>>(new Map());
 const balanceLevel = ref('all');        // '1' | 'all'
 const balanceHideZero = ref(false);     // 隐藏余额为0的科目
@@ -313,7 +315,7 @@ const qdEndDate = ref('');
 const qdPage = ref(1);
 const qdPageSize = 50;
 const qdTotal = ref(0);
-const qdRows = ref<QuantityDetailLedgerRow[]>([]);
+const qdRows = shallowRef<QuantityDetailLedgerRow[]>([]);
 const qdLoading = ref(false);
 
 async function queryQtyDetail(resetPage = true) {
@@ -341,7 +343,7 @@ const qgPeriodFrom = ref('2026-01');
 const qgPeriodTo = ref('2026-06');
 const qgSubjectCode = ref('');
 const qgLevel = ref('all');
-const qgRows = ref<QuantityGeneralLedgerRow[]>([]);
+const qgRows = shallowRef<QuantityGeneralLedgerRow[]>([]);
 const qgLoading = ref(false);
 
 async function queryQtyGeneral() {
@@ -455,7 +457,7 @@ interface GeneralDisplayRow {
   groupIdx: number; // for rowspan
 }
 
-const generalRows = ref<GeneralDisplayRow[]>([]);
+const generalRows = shallowRef<GeneralDisplayRow[]>([]);
 const generalLoading = ref(false);
 
 async function queryGeneralLedger() {
@@ -607,7 +609,7 @@ interface DetailDisplayRow {
   balance: number;
 }
 
-const detailRows = ref<DetailDisplayRow[]>([]);
+const detailRows = shallowRef<DetailDisplayRow[]>([]);
 const detailSubjectName = ref('');
 const detailCarryForward = ref(0);
 const detailCarriedForward = ref(0);
@@ -646,8 +648,8 @@ async function loadData() {
   } finally { loading.value = false; }
 }
 
-function selectBook(category: BookCategory, key: string) {
-  activeCategory.value = category;
+// ponytail: 切换账簿，category 由 bookGroups key 自动推导
+function selectBook(key: string) {
   activeBook.value = key;
   detailPage.value = 1;
   if (key === 'balance') loadData();
@@ -953,26 +955,20 @@ function handleExportBalance() {
       </div>
     </div>
 
-    <div class="ledger-layout">
-      <!-- 左侧：账簿导航 -->
-      <aside class="ledger-nav">
-        <div v-for="group in bookGroups" :key="group.title" class="nav-group">
-          <div class="nav-group-title">{{ group.title }}</div>
-          <div
-            v-for="item in group.items"
-            :key="item.key"
-            :class="['nav-item', { active: activeBook === item.key }]"
-            @click="selectBook(
-              group.title === '主账簿' ? 'main' : 'aux' as BookCategory,
-              item.key
-            )"
-          >
-            <span class="nav-icon" v-html="bookIcons[item.key]"></span>
-            <span class="nav-label">{{ item.label }}</span>
-          </div>
-        </div>
-      </aside>
+    <!-- 账簿Tab选择器 — rpt-tab 风格，单行自动换行 -->
+    <div class="book-tabs">
+      <button
+        v-for="item in allBookItems"
+        :key="item.key"
+        :class="['bt-tab', { active: activeBook === item.key }]"
+        @click="selectBook(item.key)"
+      >
+        <span class="bt-icon" v-html="bookIcons[item.key]"></span>
+        {{ item.label }}
+      </button>
+    </div>
 
+    <div class="ledger-layout">
       <!-- 中间：查询条件 + 数据区域 -->
       <div class="ledger-content">
         <!-- ==================== 明细账 ==================== -->
@@ -1541,41 +1537,39 @@ function handleExportBalance() {
 /* ---- 三栏布局 ---- */
 .ledger-layout { display: flex; gap: 10px; flex: 1; min-height: 0; }
 
-/* ---- 左侧账簿导航 ---- */
-.ledger-nav {
-  width: 170px; min-width: 170px;
-  background: var(--epp-paper); border: 1px solid var(--epp-line-light);
-  border-radius: 6px; padding: 6px 0; overflow-y: auto; flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.03);
+/* ---- 账簿Tab选择器（rpt-tab风格） ---- */
+.book-tabs {
+  display: flex; flex-wrap: wrap; gap: 0;
+  padding: 0 16px;
+  background: var(--epp-paper);
+  border-bottom: 1px solid var(--epp-line);
+  flex-shrink: 0;
 }
-.nav-group { margin-bottom: 4px; }
-.nav-group:last-child { margin-bottom: 0; }
-.nav-group-title {
-  padding: 8px 14px 4px; font-size: 11px; font-weight: 700;
-  color: var(--epp-ink-sub); letter-spacing: 0.5px; text-transform: uppercase;
+.bt-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 9px 18px;
+  border: none; border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px; font-family: inherit; color: var(--epp-ink-sub);
+  transition: all 0.2s;
+  font-weight: 500;
+  position: relative; top: 1px;
+  white-space: nowrap;
 }
-.nav-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 12px 7px 14px; font-size: 13px; color: var(--epp-ink-text);
-  cursor: pointer; transition: all 0.15s ease;
-  border-left: 3px solid transparent;
-  margin: 1px 6px 1px 0; border-radius: 0 6px 6px 0;
+.bt-tab:hover { color: var(--epp-ink-text); }
+.bt-tab.active {
+  color: var(--epp-accent);
+  border-bottom-color: var(--epp-accent);
+  font-weight: 600;
 }
-.nav-item:hover {
-  background: rgba(16, 185, 129, 0.06); color: var(--epp-ink-text);
-}
-.nav-item.active {
-  background: rgba(16, 185, 129, 0.1); color: var(--epp-success);
-  font-weight: 600; border-left-color: var(--epp-success);
-}
-.nav-icon {
+.bt-icon {
   display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; flex-shrink: 0; opacity: 0.55;
-  transition: opacity 0.15s, color 0.15s;
+  width: 15px; height: 15px; flex-shrink: 0;
+  opacity: 0.55; transition: opacity 0.15s;
 }
-.nav-item.active .nav-icon { opacity: 1; color: var(--epp-success); }
-.nav-item:hover .nav-icon { opacity: 0.75; }
-.nav-label { white-space: nowrap; }
+.bt-tab.active .bt-icon,
+.bt-tab:hover .bt-icon { opacity: 1; }
 
 /* ---- 中间内容区 ---- */
 .ledger-content { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
@@ -1619,17 +1613,10 @@ function handleExportBalance() {
 .data-panel :deep(.el-table) {
   --el-table-border-color: var(--epp-line-light);
   --el-table-header-bg-color: #f1f5f9;
-  --el-table-tr-bg-color: #fafbfc;
-  --el-table-row-hover-bg-color: #f3f6f9;
   font-size: 12px;
 }
 
-/* 默认行底色 */
-.data-panel :deep(.el-table__body tr) {
-  background-color: #fafbfc;
-}
 .data-panel :deep(.el-table__body tr:hover > td) {
-  background-color: #f3f6f9 !important;
   border-bottom-color: var(--epp-line-light) !important;
 }
 
@@ -1706,10 +1693,10 @@ function handleExportBalance() {
   font-size: 12px; color: var(--epp-ink-text); border-left: 3px solid transparent;
   margin-right: 4px; border-radius: 0 4px 4px 0;
 }
-.tree-node:hover { background: rgba(16, 185, 129, 0.06); }
+.tree-node:hover { background: rgba(8, 145, 178, 0.06); }
 .tree-node.active {
-  background: rgba(16, 185, 129, 0.08); color: var(--epp-success);
-  font-weight: 600; border-left-color: var(--epp-success);
+  background: rgba(8, 145, 178, 0.08); color: var(--epp-accent);
+  font-weight: 600; border-left-color: var(--epp-accent);
 }
 .tree-level1 { padding-left: 8px; }
 .tree-level2 { padding-left: 28px; }
@@ -1719,7 +1706,7 @@ function handleExportBalance() {
   text-align: center; line-height: 14px; color: var(--epp-ink-sub);
   transition: transform 0.15s, color 0.15s; cursor: pointer; flex-shrink: 0;
 }
-.tree-arrow.expanded { transform: rotate(90deg); color: var(--epp-success); }
+.tree-arrow.expanded { transform: rotate(90deg); color: var(--epp-accent); }
 .tree-arrow-spacer { width: 14px; flex-shrink: 0; }
 
 .tree-code { color: var(--epp-ink-sub); font-size: 10px; font-variant-numeric: tabular-nums; min-width: 32px; }
@@ -1754,7 +1741,6 @@ function handleExportBalance() {
 /* ---- 打印样式 ---- */
 @media print {
   .page-wrap { height: auto; overflow: visible; }
-  .ledger-nav,
   .subject-tree-panel,
   .query-bar,
   .pagination-bar,
@@ -1769,19 +1755,17 @@ function handleExportBalance() {
     padding: 0; min-height: auto;
   }
   .data-panel :deep(.el-table) { font-size: 11px; }
-  .data-panel :deep(.el-table__body tr:hover > td) { background-color: #fafbfc !important; }
+  .data-panel :deep(.el-table__body tr:hover > td) { background-color: var(--epp-surface-striped) !important; }
   .data-panel :deep(.el-table__header-wrapper) { position: static; }
   .ledger-content { overflow: visible; }
   body { background: #fff; }
 }
 
 /* ---- 滚动条优化 ---- */
-.ledger-nav::-webkit-scrollbar,
 .tree-body::-webkit-scrollbar,
 .data-panel::-webkit-scrollbar {
   width: 4px; height: 4px;
 }
-.ledger-nav::-webkit-scrollbar-thumb,
 .tree-body::-webkit-scrollbar-thumb,
 .data-panel::-webkit-scrollbar-thumb {
   background: var(--epp-line); border-radius: 2px;

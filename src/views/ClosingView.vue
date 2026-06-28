@@ -1,15 +1,10 @@
 <script setup lang="ts">
-/**
- * ClosingView.vue — 期末结账页面
- *
- * 布局：卡片式期间选择（金蝶风格）+ 底部批量操作栏
- * 检查项：结账前自动校验未过账凭证、试算平衡、期初余额、科目方向等
- */
+// ponytail: 期末结账 — 卡片式期间选择 + 检查项校验(凭证/试算/期初/方向/报表/断号)
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   ArrowLeft, ArrowRight, CircleCheck, CircleCheckFilled, Check,
-  Loading, Close, WarningFilled,
+  Loading, Close, WarningFilled, TrendCharts,
 } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 
@@ -19,7 +14,6 @@ const currentPeriod = ref('');
 const loading = ref(false);
 const closing = ref(false);
 
-/** 当前显示年份 */
 const displayYear = ref(2026);
 
 /* ======== 检查项系统 ======== */
@@ -33,12 +27,9 @@ interface CheckItem {
   detail: string;          // 结果详情
 }
 
-/** 从 localStorage 读取启用的检查项 */
+// ponytail: 从 localStorage 读取启用的检查项，默认开前4项
 function loadCheckConfig(): string[] {
-  try {
-    const raw = localStorage.getItem('closing_checks_enabled');
-    if (raw) return JSON.parse(raw);
-  } catch {}
+  try { const raw = localStorage.getItem('closing_checks_enabled'); if (raw) return JSON.parse(raw); } catch {}
   return ['unposted', 'trial_balance', 'opening_exists', 'negative_balance'];
 }
 
@@ -66,12 +57,18 @@ onMounted(async () => {
   await loadPeriods();
 });
 
-function toggleCheckItem(item: CheckItem) {
-  item.enabled = !item.enabled;
+function toggleCheckItem(item: CheckItem) { // ponytail: 失败/警告项点击重置状态；正常项切换开关
+  if (item.status === 'fail' || item.status === 'warn') {
+    item.status = 'idle';
+    item.detail = '';
+    // 不切换 enabled，保持已启用状态
+  } else {
+    item.enabled = !item.enabled;
+  }
   saveCheckConfig(checkItems.value.filter(c => c.enabled).map(c => c.key));
 }
 
-/** 重置所有检查项状态 */
+// ponytail: 重置所有检查状态
 function resetCheckStatus() {
   checkItems.value.forEach(c => {
     c.status = 'idle';
@@ -79,7 +76,7 @@ function resetCheckStatus() {
   });
 }
 
-/** 运行全部启用的检查项 */
+// ponytail: 并行运行全部启用的检查项
 async function runAllChecks(period: string) {
   checkRunning.value = true;
   resetCheckStatus();
@@ -114,7 +111,10 @@ async function runAllChecks(period: string) {
             item.detail = `借方发生额 ${tb.totals.amountDebit.toFixed(2)} = 贷方发生额 ${tb.totals.amountCredit.toFixed(2)}`;
           } else {
             item.status = 'fail';
-            item.detail = `试算不平衡！借方 ${tb.totals.amountDebit.toFixed(2)} ≠ 贷方 ${tb.totals.amountCredit.toFixed(2)}`;
+            const parts: string[] = [];
+            if (!debitOk) parts.push(`发生额不平衡：借方 ${tb.totals.amountDebit.toFixed(2)} ≠ 贷方 ${tb.totals.amountCredit.toFixed(2)}（差异 ${Math.abs(tb.totals.amountDebit - tb.totals.amountCredit).toFixed(2)}）`);
+            if (!endOk) parts.push(`期末余额不平衡：借方 ${tb.totals.endingDebit.toFixed(2)} ≠ 贷方 ${tb.totals.endingCredit.toFixed(2)}（差异 ${Math.abs(tb.totals.endingDebit - tb.totals.endingCredit).toFixed(2)}）`);
+            item.detail = parts.join('；');
           }
           break;
         }
@@ -141,11 +141,8 @@ async function runAllChecks(period: string) {
             if (Math.abs(b.balance) < 0.005) continue;
             const sub = subjects.find(s => s.code === b.code);
             if (!sub) continue;
-            // 资产/成本类借方余额应为正（debit方向），负债/权益/收入类贷方余额应为正
-            const isDebitNature = ['asset', 'cost', 'expense'].includes(sub.category);
-            if (isDebitNature && b.balance < 0) {
-              abnormal.push(`${b.code} ${b.name}`);
-            } else if (!isDebitNature && b.balance > 0) {
+            // balance 已按科目方向归一化：正数=自然方向，负数=反向余额（异常）
+            if (b.balance < 0) {
               abnormal.push(`${b.code} ${b.name}`);
             }
           }
@@ -154,7 +151,7 @@ async function runAllChecks(period: string) {
             item.detail = '所有科目余额方向正常';
           } else {
             item.status = 'warn';
-            item.detail = `${abnormal.length} 个科目余额方向异常：${abnormal.slice(0, 3).join('、')}${abnormal.length > 3 ? '…' : ''}`;
+            item.detail = `${abnormal.length} 个科目余额方向异常：${abnormal.slice(0, 3).join('、')}${abnormal.length > 3 ? '…' : ''}（请确认科目性质与实际余额方向一致）`;
           }
           break;
         }
@@ -168,7 +165,7 @@ async function runAllChecks(period: string) {
             item.detail = `资产 ${assetTotal.toFixed(2)} = 负债 ${liabTotal.toFixed(2)} + 权益 ${equityTotal.toFixed(2)}`;
           } else {
             item.status = 'fail';
-            item.detail = `资产负债表不平！差异 ${Math.abs(assetTotal - liabTotal - equityTotal).toFixed(2)}`;
+            item.detail = `资产负债表不平！资产 ${assetTotal.toFixed(2)} ≠ 负债 ${liabTotal.toFixed(2)} + 权益 ${equityTotal.toFixed(2)}（差异 ${Math.abs(assetTotal - liabTotal - equityTotal).toFixed(2)}）`;
           }
           break;
         }
@@ -211,7 +208,7 @@ async function runAllChecks(period: string) {
   checkRunning.value = false;
 }
 
-/** 检查结果统计 */
+// ponytail: 检查结果汇总
 const checkSummary = computed(() => {
   const enabled = checkItems.value.filter(c => c.enabled);
   const passCount = enabled.filter(c => c.status === 'pass').length;
@@ -281,21 +278,17 @@ async function loadPeriods() {
     const year = match ? parseInt(match[1]) : 2026;
     displayYear.value = year;
     buildPeriods(year, data.periods || []);
+    await loadCarryForwardInfo();
   } finally { loading.value = false; }
 }
 
+// ponytail: 生成全年12个月期间结构，匹配已存在期间的状态
 function buildPeriods(year: number, existing: Array<{ period: string; status: string }>) {
-  const result: typeof periods.value = [];
-  for (let m = 1; m <= 12; m++) {
-    const p = `${year}-${String(m).padStart(2, '0')}`;
+  periods.value = Array.from({ length: 12 }, (_, i) => {
+    const p = `${year}-${String(i + 1).padStart(2, '0')}`;
     const found = existing.find(e => e.period === p);
-    result.push({
-      period: p,
-      status: found ? found.status : 'future',
-      exists: !!found,
-    });
-  }
-  periods.value = result;
+    return { period: p, status: found ? found.status : 'future', exists: !!found };
+  });
 }
 
 async function goPrevYear() { displayYear.value--; await refreshData(); }
@@ -307,17 +300,10 @@ const nextCloseable = computed(() => {
 });
 
 /** 期间状态图标和颜色 */
-function periodCardClass(p: typeof periods.value[0]) {
-  if (p.status === 'closed') return 'period-card--closed';
-  if (p.status === 'open') return 'period-card--open';
-  return 'period-card--future';
-}
+// ponytail: status 即 CSS 类名后缀
+function periodCardClass(p: typeof periods.value[0]) { return `period-card--${p.status}`; }
 
-function periodStatusLabel(p: typeof periods.value[0]) {
-  if (p.status === 'closed') return '已结账';
-  if (p.status === 'open') return '进行中';
-  return '未开始';
-}
+function periodStatusLabel(p: typeof periods.value[0]) { return p.status === 'closed' ? '已结账' : p.status === 'open' ? '进行中' : '未开始'; }
 
 async function handleReopenPeriod(period: string) {
   try {
@@ -336,6 +322,20 @@ async function refreshData() {
   const data = await api.bootstrap();
   currentPeriod.value = data.book.current_period;
   buildPeriods(displayYear.value, data.periods || []);
+  await loadCarryForwardInfo();
+}
+
+/** 计算当前显示年份的损益结转凭证数量 */
+const carryForwardCount = ref(0);
+async function loadCarryForwardInfo() {
+  try {
+    const yearStr = String(displayYear.value);
+    const vouchers = await api.listVouchers({
+      startDate: `${yearStr}-01-01`,
+      endDate: `${yearStr}-12-31`,
+    });
+    carryForwardCount.value = vouchers.filter(v => v.remark?.includes('[损益结转]')).length;
+  } catch { carryForwardCount.value = 0; }
 }
 </script>
 
@@ -388,32 +388,40 @@ async function refreshData() {
       </div>
     </div>
 
+    <!-- 损益结转凭证统计 -->
+    <div class="cl-carry-info" v-if="carryForwardCount > 0 || periods.some(p => p.status === 'closed')">
+      <div class="cl-carry-label">
+        <el-icon :size="16"><TrendCharts /></el-icon>
+        <span>损益结转凭证</span>
+      </div>
+      <div class="cl-carry-body">
+        <span class="cl-carry-count">{{ carryForwardCount }} 张</span>
+        <span class="cl-carry-hint">结账时系统自动生成，将当期损益类科目余额结转至「本年利润」</span>
+      </div>
+    </div>
+
     <!-- 底部操作栏 -->
     <div class="cl-action-bar">
-      <div class="cl-action-left">
-        <el-button
-          type="primary"
-          size="large"
-          :disabled="!nextCloseable || closing"
-          :loading="closing"
-          @click="openCheckDialog"
-        >
-          <el-icon style="margin-right:4px"><Check /></el-icon>
-          检查并结账
-        </el-button>
-        <span class="cl-hint" v-if="nextCloseable">
-          下一个待结账期间：<strong>{{ nextCloseable.period }}</strong>
-        </span>
-        <span class="cl-hint cl-hint--done" v-else-if="periods.some(p => p.status === 'closed')">
-          当年所有期间已结账完成
-        </span>
-        <span class="cl-hint cl-hint--empty" v-else>
-          当年暂无待结账期间
-        </span>
-      </div>
-      <div class="cl-action-right">
-        <el-button text size="small" @click="openCheckDialog">检查项设置</el-button>
-      </div>
+      <el-button
+        type="primary"
+        size="large"
+        :disabled="!nextCloseable || closing"
+        :loading="closing"
+        @click="openCheckDialog"
+      >
+        <el-icon style="margin-right:4px"><Check /></el-icon>
+        检查并结账
+      </el-button>
+      <el-button text size="small" @click="openCheckDialog">检查项设置</el-button>
+      <span class="cl-hint" v-if="nextCloseable">
+        下一个待结账期间：<strong>{{ nextCloseable.period }}</strong>
+      </span>
+      <span class="cl-hint cl-hint--done" v-else-if="periods.some(p => p.status === 'closed')">
+        当年所有期间已结账完成
+      </span>
+      <span class="cl-hint cl-hint--empty" v-else>
+        当年暂无待结账期间
+      </span>
     </div>
 
     <!-- ====== 检查项对话框 ====== -->
@@ -448,7 +456,7 @@ async function refreshData() {
         >
           <!-- 开关 -->
           <el-switch
-            :model-value="item.enabled"
+            :model-value="item.enabled && item.status !== 'fail' && item.status !== 'warn'"
             size="small"
             :disabled="checkRunning"
             @change="toggleCheckItem(item)"
@@ -746,11 +754,46 @@ async function refreshData() {
   line-height: 1.4;
 }
 
+/* ======== 结转凭证统计条 ======== */
+.cl-carry-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ecfeff;
+  border: 1px solid #a5f3fc;
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+.cl-carry-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0e7490;
+  flex-shrink: 0;
+}
+.cl-carry-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cl-carry-count {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--epp-accent);
+}
+.cl-carry-hint {
+  font-size: 12px;
+  color: var(--epp-ink-sub);
+}
+
 /* ======== 底部操作栏 ======== */
 .cl-action-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
   padding: clamp(12px, 2vw, 16px) clamp(14px, 2.5vw, 20px);
@@ -758,20 +801,6 @@ async function refreshData() {
   border: 1px solid var(--epp-line-light);
   border-radius: 6px;
   box-shadow: 0 1px 3px rgba(10, 30, 61, 0.03);
-}
-
-.cl-action-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.cl-action-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
 }
 
 .cl-hint {
