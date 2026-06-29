@@ -1,7 +1,7 @@
 /**
  * shared/report-formulas.cjs — 报表公式计算（纯函数，无数据库依赖）
  *
- * 同时被 Electron 端（reports.cjs）和浏览器端（mock.ts）引用
+ * 被 Electron 端（reports.cjs）引用
  */
 
 /**

@@ -10,10 +10,8 @@
 
 | 命令 | 说明 | 产物 |
 |------|------|------|
-| `npm run dev` | 启动 Vite 开发服务器（仅前端） | `http://localhost:5173` |
 | `npm run dev:electron` | 启动 Electron 开发模式（前端 + 桌面壳） | 桌面窗口 |
-| `npm run build` | 仅编译前端（TypeScript + Vue） | `dist/` 文件夹 |
-| `npm run build:exe` | **完整打包 → NSIS 安装包** | `release\Rabbit_ERP Setup 0.1.0.exe` |
+| `npm run build:exe` | **完整打包 → NSIS 安装包** | `release\Rabbit_ERP Setup 1.1.0.exe` |
 
 ## 完整打包流程
 
@@ -53,7 +51,7 @@ npx electron-builder --win --x64 --publish=never
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `Rabbit_ERP Setup 0.1.0.exe` | ~106 MB | NSIS 安装包（推荐分发） |
+| `Rabbit_ERP Setup 1.1.0.exe` | ~106 MB | NSIS 安装包（推荐分发） |
 | `win-unpacked/Rabbit_ERP.exe` | ~201 MB | 免安装绿色版（直接运行） |
 
 ---
@@ -104,7 +102,7 @@ workspace/
 │   └── services/         # 数据库服务
 ├── dist/                 # 前端构建产物（Vite 输出）
 └── release/              # Electron 打包产物
-    ├── Rabbit_ERP Setup 0.1.0.exe   # NSIS 安装包
+    ├── Rabbit_ERP Setup 1.1.0.exe   # NSIS 安装包
     └── win-unpacked/                # 免安装目录
 ```
 

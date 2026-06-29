@@ -142,7 +142,7 @@ function handleUserCmd(cmd: string) {
       <div class="topbar-right" v-if="auth.state.loggedIn">
         <!-- 系统状态指示器 -->
         <span class="topbar-status">
-          <span class="topbar-status-dot" :class="isElectron ? 'online' : 'mock'" :title="isElectron ? 'Electron 桌面端' : '浏览器开发模式'"></span>
+          <span class="topbar-status-dot online" title="Electron 桌面端"></span>
           服务器
         </span>
         <span class="topbar-divider">|</span>

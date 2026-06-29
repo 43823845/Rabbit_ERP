@@ -749,7 +749,7 @@ function formatFileSize(bytes: number): string {
             <div class="sp-panel-body" v-loading="dbLoading">
               <div class="db-info-grid">
                 <div class="db-info-item"><span class="db-info-label">数据库路径</span><span class="db-info-value db-info-path">{{ (dbInfo?.dbPath || '—').replace(/\\/g,'\\') }}</span></div>
-                <div class="db-info-item"><span class="db-info-label">文件大小</span><span class="db-info-value">{{ dbInfo&&!dbInfo.isMock?formatFileSize(dbInfo.dbSize):'—' }}</span></div>
+                <div class="db-info-item"><span class="db-info-label">文件大小</span><span class="db-info-value">{{ dbInfo ? formatFileSize(dbInfo.dbSize) : '—' }}</span></div>
                 <div class="db-info-item"><span class="db-info-label">数据页数</span><span class="db-info-value">{{ dbInfo?.pageCount||'—' }}</span></div>
                 <div class="db-info-item"><span class="db-info-label">空闲页数</span><span class="db-info-value">{{ dbInfo?.freelistCount||'—' }}</span></div>
               </div>
@@ -796,11 +796,10 @@ function formatFileSize(bytes: number): string {
               <el-descriptions-item label="版本号">v1.0.0</el-descriptions-item>
               <el-descriptions-item label="技术栈">Vue 3 + Element Plus + Electron + SQLite</el-descriptions-item>
               <el-descriptions-item label="运行环境">
-                <el-tag v-if="isElectron" size="small" type="success" effect="dark">Electron 桌面端</el-tag>
-                <el-tag v-else size="small">浏览器开发模式</el-tag>
+                <el-tag size="small" type="success" effect="dark">Electron 桌面端</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="路由模式">Hash 模式 (适配 file:// 协议)</el-descriptions-item>
-              <el-descriptions-item label="数据存储">{{ isElectron ? 'SQLite 本地数据库 (Rabbit_ERP.db)' : 'localStorage 浏览器缓存' }}</el-descriptions-item>
+              <el-descriptions-item label="数据存储">SQLite 本地数据库 (Rabbit_ERP.db)</el-descriptions-item>
             </el-descriptions>
           </div>
         </div>

@@ -1,4 +1,4 @@
-// ponytail: API工厂 — MockFinanceApi(浏览器) / ElectronFinanceApi(IPC→SQLite)
+// ponytail: API工厂 — ElectronFinanceApi (IPC → SQLite，仅桌面模式)
 import type { FinanceApi } from '../vite-env';
 
 export type { FinanceApi } from '../vite-env';
@@ -22,14 +22,8 @@ export async function createFinanceApi(): Promise<FinanceApi> {
   const saved = window.__financeApiInstance;
   if (saved && isValidApi(saved)) return (instance = saved);
 
-  // 防御：永远不使用不完整的 window.financeApi
-  if (window.electronAPI) {
-    const { ElectronFinanceApi } = await import('./electron');
-    instance = new ElectronFinanceApi();
-  } else {
-    const { MockFinanceApi } = await import('./mock');
-    instance = new MockFinanceApi();
-  }
+  const { ElectronFinanceApi } = await import('./electron');
+  instance = new ElectronFinanceApi();
   persistInstance(instance);
   return instance;
 }

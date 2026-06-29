@@ -493,7 +493,6 @@ export interface DatabaseInfo {
   pageCount: number;
   freelistCount: number;
   tableCounts?: Record<string, number>;
-  isMock?: boolean;
 }
 
 export interface MultiColumnSchemePayload {

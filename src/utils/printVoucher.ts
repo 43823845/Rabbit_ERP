@@ -1,4 +1,4 @@
-// ponytail: 凭证打印 — Electron用webContents.print()，浏览器用隐藏iframe
+// ponytail: 凭证打印 — Electron webContents.print()
 import { voucherTableCss, buildVoucherExportHtml } from './voucherTemplate';
 import type { FinanceVoucher } from '../api';
 
@@ -33,43 +33,10 @@ export async function handlePrintVoucher(voucher: FinanceVoucher): Promise<strin
 </body>
 </html>`;
 
-  // Electron 环境：通过主进程 webContents.print() 直接调起系统打印对话框
-  if (window.electronAPI) {
-    try {
-      const result: any = await window.electronAPI.invoke('print-voucher', { html });
-      if (!result?.success) {
-        return `打印失败: ${result?.reason || '未知错误'}`;
-      }
-      return; // 成功
-    } catch (e: any) {
-      return `打印异常: ${e?.message || e}`;
-    }
+  try {
+    const result: any = await window.electronAPI!.invoke('print-voucher', { html });
+    if (!result?.success) return `打印失败: ${result?.reason || '未知错误'}`;
+  } catch (e: any) {
+    return `打印异常: ${e?.message || e}`;
   }
-
-  // 浏览器环境：隐藏 iframe 加载 HTML，直接弹出系统打印对话框
-  return new Promise<string | void>((resolve) => {
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;border:none;visibility:hidden';
-    iframe.srcdoc = html;
-    document.body.appendChild(iframe);
-
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.print();
-        resolve();
-      } catch (e: any) {
-        resolve(`打印异常: ${e?.message || e}`);
-      } finally {
-        // 打印对话框关闭后再清理 iframe
-        setTimeout(() => {
-          iframe.remove();
-        }, 1000);
-      }
-    };
-
-    iframe.onerror = () => {
-      iframe.remove();
-      resolve('打印页面加载失败');
-    };
-  });
 }

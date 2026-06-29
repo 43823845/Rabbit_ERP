@@ -68,9 +68,8 @@ workspace/
     ├── styles.css                # 全局样式 + Element Plus 主题覆盖
     ├── vite-env.d.ts             # 全局类型定义
     ├── api/
-    │   ├── index.ts              # API 工厂入口 (Mock / Electron)
-    │   ├── mock.ts               # 浏览器 Mock API (localStorage)
-    │   └── electron.ts           # Electron API (IPC → SQLite)
+    │   ├── index.ts              # API 工厂入口
+    │   └── electron.ts           # Electron IPC → SQLite
     ├── components/
     │   ├── AppIcon.vue           # 应用图标组件
     │   ├── VoucherModal.vue      # 凭证编辑弹窗组件
@@ -237,33 +236,17 @@ module.exports = {
 # 安装依赖
 npm install
 
-# 启动 Vue 开发服务器 (浏览器模式，使用 Mock 数据)
-npm run dev
-
-# 启动 Electron 桌面应用 (使用 SQLite 数据库)
+# 启动 Electron 桌面应用 (开发模式)
 npm run dev:electron
-
-# 类型检查 + 构建
-npm run build
 
 # 构建 Windows 安装包 (NSIS)
 npm run build:exe
 
 # 构建 Windows 便携版 (免安装)
 npm run build:exe:portable
-
-# 预览构建产物
-npm run preview
 ```
 
-## 双模式数据存储
-
-| 模式 | 环境 | 存储方式 |
-|------|------|----------|
-| 浏览器开发 | Vite Dev Server | localStorage + 内存 Mock |
-| 桌面应用 | Electron | better-sqlite3 本地数据库 |
-
-### SQLite 数据库表结构
+### 数据库表结构
 
 | 表名 | 说明 | 关键字段 |
 |------|------|----------|
@@ -275,20 +258,18 @@ npm run preview
 | `gl_voucher_entry` | 凭证分录 | summary, subject_code, debit, credit |
 | `sys_operation_log` | 操作日志 | action, detail, operator, created_at |
 
-## 统一 API 层架构
+## API 架构
 
 ```
 渲染进程 (Vue)                    主进程 (Node.js)
     │                                  │
-    ├── src/api/index.ts ── 工厂模式 ──┤
-    │   ├── MockFinanceApi            │
-    │   │   └── localStorage          │
-    │   └── ElectronFinanceApi        │
+    ├── src/api/index.ts               │
+    │   └── ElectronFinanceApi         │
     │       └── window.electronAPI ── preload.cjs ── ipcRenderer.invoke()
     │                                  │
     │                             main.cjs ── ipcMain.handle()
     │                                  │
-    │                         finance-database.cjs ── SQLite
+    │                         database/*.cjs ── SQLite
 ```
 
 ## 预置会计科目 (79个金蝶标准一级科目)
@@ -319,8 +300,7 @@ npm run preview
 ## 注意事项
 
 - 路由采用 **Hash 模式** (`createWebHashHistory`)，适配 Electron 的 `file://` 协议
-- 浏览器开发模式下数据存储在 `localStorage`，key 为 `finance_data_{companyId}`
-- Electron 模式下数据库文件位于用户数据目录的 `Rabbit_ERP.db`
+- 数据库文件位于用户数据目录的 `Rabbit_ERP.db`
 - 凭证仅草稿状态可编辑/删除；审核后只能过账；过账后需先反过账再反审核
 - Windows 打包使用 `electron-builder`，NSIS 安装包输出至 `release/` 目录
 - 修改 `app.config.cjs` 后运行 `npm run dev` 或 `npm run build:exe` 自动同步

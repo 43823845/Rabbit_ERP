@@ -1,7 +1,7 @@
 /**
  * shared/report-templates.cjs — 报表模板定义（单一数据源）
  *
- * 同时被 Electron 端（schema.cjs / reports.cjs）和浏览器端（mock.ts）引用
+ * 被 Electron 端（schema.cjs / reports.cjs）引用
  */
 
 /** 报表模板种子数据 */
