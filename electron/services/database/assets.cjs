@@ -119,8 +119,17 @@ function applyAssetMethods(FinanceDatabase) {
     const card = this.db.prepare('SELECT * FROM fa_asset_card WHERE id = ? AND book_id = ?').get(id, this.currentBookId);
     if (!card) throw new Error('固定资产卡片不存在');
     if (card.status === '报废' || card.status === '已处置') throw new Error('已报废/已处置的资产不能计提折旧');
+    if (card.status === '已提足折旧') throw new Error('该资产已提足折旧，无需再计提');
 
-    const addDep = Math.round((card.monthly_depreciation * periods) * 100) / 100;
+    // 计算剩余可提折旧额度，不超过残值
+    const residual = card.original_value * (card.residual_rate || 0);
+    const maxDepreciable = card.original_value - residual;
+    const remainingDepreciable = Math.max(0, maxDepreciable - card.accumulated_depreciation);
+    const maxPeriods = card.monthly_depreciation > 0 ? Math.floor(remainingDepreciable / card.monthly_depreciation) : 0;
+    const effectivePeriods = Math.min(periods, maxPeriods);
+    if (effectivePeriods <= 0) throw new Error('该资产可计提折旧额度已用完');
+
+    const addDep = Math.round((card.monthly_depreciation * effectivePeriods) * 100) / 100;
     const newAccDep = Math.round((card.accumulated_depreciation + addDep) * 100) / 100;
     const newNetValue = Math.round((card.original_value - newAccDep) * 100) / 100;
 
