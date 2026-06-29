@@ -188,12 +188,22 @@ async function handleBatchDelete() {
     await ElMessageBox.confirm(`确定批量删除 ${draftIds.length} 张草稿凭证？此操作不可恢复！`, '批量删除', {
       confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'error',
     });
-    let success = 0, failed = 0;
+    let success = 0;
+    const failedVoucherNos: string[] = [];
     for (const id of draftIds) {
-      try { await api.deleteVoucher(id); success++; } catch { failed++; }
+      try {
+        await api.deleteVoucher(id);
+        success++;
+      } catch (e: any) {
+        const v = selectedVouchers.value.find(sv => sv.id === id);
+        failedVoucherNos.push(v ? `${v.voucher_word}-${v.voucher_no}` : `ID:${id}`);
+      }
     }
-    if (success > 0) ElMessage.success(`批量删除完成：成功 ${success} 张${failed > 0 ? `，${failed} 张失败` : ''}`);
-    else ElMessage.warning('批量删除全部失败');
+    if (failedVoucherNos.length > 0) {
+      ElMessage.warning(`成功删除 ${success} 张，${failedVoucherNos.length} 张失败：${failedVoucherNos.join('、')}`);
+    } else {
+      ElMessage.success(`成功删除 ${success} 张凭证`);
+    }
     refresh();
   } catch { /* 取消 */ }
 }
