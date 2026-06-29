@@ -688,14 +688,20 @@ function exportCurrentBook() {
 
   // 多栏账
   if (bookKey === 'multiColumn' && mcResult.value) {
-    const { cols, rows } = mcResult.value;
-    const headers = ['科目编码', '科目名称', ...cols.map((c: any) => `${c.code} ${c.name}(借)`), ...cols.map((c: any) => `${c.code} ${c.name}(贷)`), '借方合计', '贷方合计', '余额'];
-    const csvRows = rows.map((r: MultiColumnLedgerRow) => ({
-      '科目编码': r.code, '科目名称': r.name,
-      ...Object.fromEntries(cols.map((c: any, i: number) => [`${c.code} ${c.name}(借)`, r.debits?.[i] || 0])),
-      ...Object.fromEntries(cols.map((c: any, i: number) => [`${c.code} ${c.name}(贷)`, r.credits?.[i] || 0])),
-      '借方合计': r.totalDebit || 0, '贷方合计': r.totalCredit || 0, '余额': r.balance || 0,
-    }));
+    const { columns, rows } = mcResult.value;
+    const headers = ['日期', '凭证字号', '摘要', ...columns.map((c) => `${c.code} ${c.name}(借)`), ...columns.map((c) => `${c.code} ${c.name}(贷)`), '借方合计', '贷方合计', '余额'];
+    const csvRows = rows.map((r) => {
+      const debits = r.cells.map((cell) => cell.debit);
+      const credits = r.cells.map((cell) => cell.credit);
+      const totalDebit = debits.reduce((s, v) => s + v, 0);
+      const totalCredit = credits.reduce((s, v) => s + v, 0);
+      return {
+        '日期': r.voucher_date, '凭证字号': `${r.voucher_word}-${r.voucher_no}`, '摘要': r.summary || '',
+        ...Object.fromEntries(columns.map((c, i) => [`${c.code} ${c.name}(借)`, debits[i] || 0])),
+        ...Object.fromEntries(columns.map((c, i) => [`${c.code} ${c.name}(贷)`, credits[i] || 0])),
+        '借方合计': totalDebit, '贷方合计': totalCredit, '余额': totalDebit - totalCredit,
+      };
+    });
     downloadCsv(headers, csvRows, `多栏账_${mcParentCode.value}_${ts}.csv`);
     return;
   }
@@ -713,12 +719,11 @@ function exportCurrentBook() {
 
   // 数量金额总账
   if (bookKey === 'qtyGeneral' && qgRows.value.length > 0) {
-    const headers = ['科目编码', '科目名称', '期初数量', '期初金额', '数量(收)', '数量(付)', '净数量', '金额(收)', '金额(付)', '净金额', '单位'];
+    const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '数量(收)', '数量(付)', '净数量', '单位'];
     const csvRows = qgRows.value.map(r => ({
       '科目编码': r.code, '科目名称': r.name,
-      '期初数量': r.opening_quantity, '期初金额': r.opening_amount,
+      '借方金额': r.total_debit, '贷方金额': r.total_credit,
       '数量(收)': r.in_quantity, '数量(付)': r.out_quantity, '净数量': r.net_quantity,
-      '金额(收)': r.in_amount, '金额(付)': r.out_amount, '净金额': r.net_amount,
       '单位': r.unit || '',
     }));
     downloadCsv(headers, csvRows, `数量金额总账_${ts}.csv`);

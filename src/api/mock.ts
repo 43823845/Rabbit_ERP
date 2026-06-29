@@ -196,11 +196,14 @@ export class MockFinanceApi implements FinanceApi {
     return a;
   }
 
-  async createAssetCard(payload: import('../vite-env').AssetCardPayload): Promise<import('../vite-env').AssetCard> {
+  async createAssetCard(payload: import('../vite-env').AssetCardPayload): Promise<{ id: number; monthlyDepreciation: number }> {
     const list = this._loadAssets();
     const id = list.length > 0 ? Math.max(...list.map(a => a.id)) + 1 : 1;
-    const months = payload.usefulLifeYears * 12;
-    const monthlyDep = Math.round((payload.originalValue * (1 - payload.residualRate) / months) * 100) / 100;
+    const years = payload.usefulLifeYears ?? 5;
+    const origVal = payload.originalValue ?? 0;
+    const rate = payload.residualRate ?? 0.05;
+    const months = years * 12;
+    const monthlyDep = months > 0 ? Math.round((origVal * (1 - rate) / months) * 100) / 100 : 0;
     const now = new Date().toISOString();
     const card: import('../vite-env').AssetCard = {
       id, book_id: 1,
@@ -208,12 +211,12 @@ export class MockFinanceApi implements FinanceApi {
       asset_name: payload.assetName || '',
       category: payload.category || '办公设备',
       buy_date: payload.buyDate || '',
-      original_value: payload.originalValue || 0,
-      residual_rate: payload.residualRate ?? 0.05,
-      useful_life_years: payload.usefulLifeYears || 5,
+      original_value: origVal,
+      residual_rate: rate,
+      useful_life_years: years,
       monthly_depreciation: monthlyDep,
       accumulated_depreciation: 0,
-      net_value: payload.originalValue || 0,
+      net_value: origVal,
       status: payload.status || '在用',
       department: payload.department || '',
       remark: payload.remark || '',
@@ -222,15 +225,18 @@ export class MockFinanceApi implements FinanceApi {
     };
     list.push(card);
     this._saveAssets(list);
-    return card;
+    return { id: card.id, monthlyDepreciation: card.monthly_depreciation };
   }
 
-  async updateAssetCard(id: number, payload: import('../vite-env').AssetCardPayload): Promise<import('../vite-env').AssetCard> {
+  async updateAssetCard(id: number, payload: import('../vite-env').AssetCardPayload): Promise<{ monthlyDepreciation: number }> {
     const list = this._loadAssets();
     const idx = list.findIndex(a => a.id === id);
     if (idx < 0) throw new Error('资产卡片不存在');
-    const months = payload.usefulLifeYears * 12;
-    const monthlyDep = Math.round((payload.originalValue * (1 - payload.residualRate) / months) * 100) / 100;
+    const years = payload.usefulLifeYears ?? list[idx].useful_life_years;
+    const origVal = payload.originalValue ?? list[idx].original_value;
+    const rate = payload.residualRate ?? list[idx].residual_rate;
+    const months = years * 12;
+    const monthlyDep = months > 0 ? Math.round((origVal * (1 - rate) / months) * 100) / 100 : 0;
     const accDep = list[idx].accumulated_depreciation;
     list[idx] = {
       ...list[idx],
@@ -249,7 +255,7 @@ export class MockFinanceApi implements FinanceApi {
       updated_at: new Date().toISOString(),
     };
     this._saveAssets(list);
-    return list[idx];
+    return { monthlyDepreciation: list[idx].monthly_depreciation };
   }
 
   async deleteAssetCard(id: number): Promise<void> {
@@ -257,25 +263,42 @@ export class MockFinanceApi implements FinanceApi {
     this._saveAssets(list.filter(a => a.id !== id));
   }
 
-  async depreciateAsset(id: number, periods: number): Promise<{ accumulatedDepreciation: number; netValue: number; addedDepreciation: number }> {
+  async depreciateAsset(id: number, periods: number = 1): Promise<{ addedDepreciation: number; accumulatedDepreciation: number; netValue: number; status: string }> {
     const list = this._loadAssets();
     const idx = list.findIndex(a => a.id === id);
     if (idx < 0) throw new Error('资产卡片不存在');
     const card = list[idx];
-    if (card.status !== '在用') throw new Error('仅在用状态的资产可计提折旧');
-    const added = Math.round((card.monthly_depreciation * periods) * 100) / 100;
-    const newAcc = card.accumulated_depreciation + added;
-    const net = card.original_value - newAcc;
-    const willFully = newAcc >= card.original_value * (1 - card.residual_rate);
+
+    // 状态检查（与 electron assets.cjs 保持一致）
+    if (card.status === '报废' || card.status === '已处置') throw new Error('已报废/已处置的资产不能计提折旧');
+    if (card.status === '已提足折旧') throw new Error('该资产已提足折旧，无需再计提');
+
+    // 计算剩余可提折旧额度，不超过残值
+    const residual = card.original_value * (card.residual_rate || 0);
+    const maxDepreciable = card.original_value - residual;
+    const remainingDepreciable = Math.max(0, maxDepreciable - card.accumulated_depreciation);
+    const maxPeriods = card.monthly_depreciation > 0 ? Math.floor(remainingDepreciable / card.monthly_depreciation) : 0;
+    const effectivePeriods = Math.min(periods, maxPeriods);
+    if (effectivePeriods <= 0) throw new Error('该资产可计提折旧额度已用完');
+
+    const added = Math.round((card.monthly_depreciation * effectivePeriods) * 100) / 100;
+    const newAcc = Math.round((card.accumulated_depreciation + added) * 100) / 100;
+    const newNet = Math.round((card.original_value - newAcc) * 100) / 100;
+
+    // 净值不能为负，累计折旧不能超过原值
+    const finalStatus = newNet <= 0 ? '已提足折旧' : card.status;
+    const finalNetValue = Math.max(0, newNet);
+    const finalAccDep = Math.min(card.original_value, newAcc);
+
     list[idx] = {
       ...card,
-      accumulated_depreciation: willFully ? Math.round(card.original_value * (1 - card.residual_rate) * 100) / 100 : newAcc,
-      net_value: willFully ? Math.round(card.original_value * card.residual_rate * 100) / 100 : net,
-      status: willFully ? '已提足折旧' : card.status,
+      accumulated_depreciation: finalAccDep,
+      net_value: finalNetValue,
+      status: finalStatus,
       updated_at: new Date().toISOString(),
     };
     this._saveAssets(list);
-    return { accumulatedDepreciation: list[idx].accumulated_depreciation, netValue: list[idx].net_value, addedDepreciation: added, status: list[idx].status };
+    return { addedDepreciation: added, accumulatedDepreciation: finalAccDep, netValue: finalNetValue, status: finalStatus };
   }
 
   async getAssetStats(): Promise<import('../vite-env').AssetStats> {
@@ -669,6 +692,14 @@ export class MockFinanceApi implements FinanceApi {
       throw new Error(`当前期间存在 ${unposted.length} 张未过账凭证，请先审核并过账全部凭证后再结账`);
     }
 
+    // 3.5 强制试算平衡检查（与 electron periods.cjs 保持一致，后端硬校验）
+    const tb = await this.getTrialBalance(period);
+    if (!tb || !tb.totals) throw new Error('无法获取试算平衡数据，请检查科目余额');
+    const endingDiff = Math.abs((tb.totals.endingDebit || 0) - (tb.totals.endingCredit || 0));
+    if (endingDiff > 0.01) {
+      throw new Error(`试算不平衡（期末借方 ${tb.totals.endingDebit.toFixed(2)} ≠ 贷方 ${tb.totals.endingCredit.toFixed(2)}，差额 ${endingDiff.toFixed(2)}），请检查凭证后再结账`);
+    }
+
     // 4. 执行损益结转
     this._carryForwardProfit(period);
 
@@ -856,8 +887,19 @@ export class MockFinanceApi implements FinanceApi {
   }
   async getVoucher(id: number) { return this.store.vouchers.find(v => v.id === id)!; }
   async createVoucher(p: VoucherPayload): Promise<FinanceVoucher & { __error?: string }> {
+    // 借贷平衡校验（与 electron utils.cjs validateVoucher 保持一致）
+    if (!p.entries || !Array.isArray(p.entries) || p.entries.length < 2) throw new Error('凭证至少需要两条分录');
+    const totalDebit = p.entries.reduce((sum, e) => sum + Number(e.debit || 0), 0);
+    const totalCredit = p.entries.reduce((sum, e) => sum + Number(e.credit || 0), 0);
+    if (totalDebit <= 0 || totalCredit <= 0 || Math.abs(totalDebit - totalCredit) > 0.001) {
+      throw new Error('借贷金额必须相等且大于0');
+    }
+    // 同账套同期同凭证字同号不能重复
+    const period = p.period || this.store.book.current_period;
+    const dup = this.store.vouchers.find(v => v.voucher_word === p.voucherWord && v.voucher_no === p.voucherNo && v.period === period);
+    if (dup) throw new Error(`凭证 ${p.voucherWord}-${p.voucherNo} 号在期间 ${period} 已存在`);
     const v: FinanceVoucher = {
-      id: Date.now(), period: p.period || this.store.book.current_period,
+      id: Date.now(), period,
       voucher_word: p.voucherWord, voucher_no: p.voucherNo, voucher_date: p.voucherDate,
       remark: p.remark, status: 'draft', maker: p.maker, bookkeeper: p.bookkeeper || '',
       created_at: new Date().toISOString(),
@@ -876,8 +918,17 @@ export class MockFinanceApi implements FinanceApi {
     return v;
   }
   async updateVoucher(p: VoucherPayload): Promise<FinanceVoucher & { __error?: string }> {
+    // 借贷平衡校验
+    if (!p.entries || !Array.isArray(p.entries) || p.entries.length < 2) throw new Error('凭证至少需要两条分录');
+    const totalDebit = p.entries.reduce((sum, e) => sum + Number(e.debit || 0), 0);
+    const totalCredit = p.entries.reduce((sum, e) => sum + Number(e.credit || 0), 0);
+    if (totalDebit <= 0 || totalCredit <= 0 || Math.abs(totalDebit - totalCredit) > 0.001) {
+      throw new Error('借贷金额必须相等且大于0');
+    }
     const idx = this.store.vouchers.findIndex(v => v.id === p.id);
     if (idx < 0) return { id: 0, period: '', voucher_word: '', voucher_no: 0, voucher_date: '', remark: '', status: 'draft', maker: '', entries: [], __error: '凭证不存在' };
+    // 已过账凭证不允许修改
+    if (this.store.vouchers[idx].status === 'posted') throw new Error('已过账凭证不可修改，请先反过账');
     this.store.vouchers[idx] = {
       ...this.store.vouchers[idx], voucher_date: p.voucherDate, remark: p.remark, bookkeeper: p.bookkeeper || '',
       entries: p.entries.map((e, i) => ({
@@ -894,8 +945,10 @@ export class MockFinanceApi implements FinanceApi {
   }
   async deleteVoucher(id: number) {
     const v = this.store.vouchers.find(x => x.id === id);
-    if (v) this.logOperation('删除凭证', `凭证 ${v.voucher_word}-${v.voucher_no}`, `删除凭证「${v.remark || v.voucher_word + '-' + v.voucher_no}」`);
+    if (!v) throw new Error('凭证不存在');
+    if (v.status !== 'draft') throw new Error('仅草稿状态可删除');
     this.store.vouchers = this.store.vouchers.filter(v => v.id !== id); this.save();
+    this.logOperation('删除凭证', `凭证 ${v.voucher_word}-${v.voucher_no}`, `删除凭证「${v.remark || v.voucher_word + '-' + v.voucher_no}」`);
   }
 
   async auditVoucher(id: number): Promise<FinanceVoucher & { __error?: string }> {

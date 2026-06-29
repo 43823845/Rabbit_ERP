@@ -129,7 +129,7 @@ async function handleCreateCompany() {
   try {
     const name = prompt('请输入新账套名称：');
     if (!name || !name.trim()) return;
-    const c = await api.createCompany({ name: name.trim() });
+    const c = await api.createCompany(name.trim());
     companies.value.push(c);
     ElMessage.success(`账套「${c.name}」已创建`);
     notifyCompanyChanged();

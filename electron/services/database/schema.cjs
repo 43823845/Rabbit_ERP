@@ -255,15 +255,17 @@ const INDEXES = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_aux_value_type_code ON aux_project_value(type_id, code, book_id)',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_opening_subject_period_book ON gl_opening_balance(subject_code, period, book_id)',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_voucher_words_book_word ON voucher_words(book_id, word)',
+  // UNIQUE约束：防止重复凭证和重复期间
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_voucher_book_word_no_period ON gl_voucher(book_id, voucher_word, voucher_no, period)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_period_book ON acct_period(book_id, period)',
   // 性能索引
   'CREATE INDEX IF NOT EXISTS idx_voucher_book_period ON gl_voucher(book_id, period)',
   'CREATE INDEX IF NOT EXISTS idx_voucher_book_status ON gl_voucher(book_id, status)',
   'CREATE INDEX IF NOT EXISTS idx_voucher_book_date ON gl_voucher(book_id, voucher_date)',
-  'CREATE INDEX IF NOT EXISTS idx_voucher_book_word_no ON gl_voucher(book_id, voucher_word, voucher_no)',
   'CREATE INDEX IF NOT EXISTS idx_voucher_entry_voucher ON gl_voucher_entry(voucher_id)',
   'CREATE INDEX IF NOT EXISTS idx_voucher_entry_subject ON gl_voucher_entry(subject_code)',
   'CREATE INDEX IF NOT EXISTS idx_opening_book_period ON gl_opening_balance(book_id, period)',
-  'CREATE INDEX IF NOT EXISTS idx_period_book ON acct_period(book_id, period)',
+  // 注意：idx_period_book 已在上面改为 UNIQUE，这里不再重复创建
   'CREATE INDEX IF NOT EXISTS idx_log_action_time ON sys_operation_log(action, created_at)',
   'CREATE INDEX IF NOT EXISTS idx_asset_book ON fa_asset_card(book_id)',
   'CREATE INDEX IF NOT EXISTS idx_asset_book_status ON fa_asset_card(book_id, status)',

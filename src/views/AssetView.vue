@@ -31,9 +31,11 @@ const form = reactive<AssetCardPayload & { assetName: string; originalValue: num
 });
 
 const previewMonthlyDep = computed(() => {
-  const months = form.usefulLifeYears * 12;
+  const years = form.usefulLifeYears ?? 0;
+  const rate = form.residualRate ?? 0;
+  const months = years * 12;
   if (months <= 0) return 0;
-  return Math.round((form.originalValue * (1 - form.residualRate) / months) * 100) / 100;
+  return Math.round((form.originalValue * (1 - rate) / months) * 100) / 100;
 });
 
 async function loadData() {
@@ -84,7 +86,7 @@ function openEdit(row: AssetCard) {
 async function handleSave() {
   if (!form.assetName.trim()) { ElMessage.warning('请输入资产名称'); return; }
   if (form.originalValue <= 0) { ElMessage.warning('原值必须大于零'); return; }
-  if (form.usefulLifeYears < 1) { ElMessage.warning('使用年限至少1年'); return; }
+  if ((form.usefulLifeYears ?? 0) < 1) { ElMessage.warning('使用年限至少1年'); return; }
   try {
     if (dialogMode.value === 'create') {
       await api.createAssetCard({ ...form });
