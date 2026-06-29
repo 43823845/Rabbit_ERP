@@ -1,4 +1,4 @@
-// ponytail: 凭证模板 — 查看/导出/打印共用CSS与HTML生成
+// ponytail: 凭证模板 — 打印/PDF 共用 CSS 与 HTML 生成（已移除 html2canvas PNG 导出）
 import { DIGIT_UNITS, digitLineClass, toDigitDisplay } from './amountDigit';
 import { toChineseUpper } from './chineseCurrency';
 import type { FinanceVoucher } from '../api';
@@ -165,7 +165,7 @@ export function buildVoucherTableHtml(v: FinanceVoucher): string {
 
 /**
  * 生成凭证导出完整 HTML（头部 + 表格 + 底部）
- * 用于 PNG 导出和打印页面
+ * 用于 PDF 导出和打印页面
  */
 export function buildVoucherExportHtml(v: FinanceVoucher): string {
   const debitTotal = v.entries.reduce((s, e) => s + Number(e.debit || 0), 0);

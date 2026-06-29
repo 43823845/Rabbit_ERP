@@ -212,7 +212,7 @@ const state = inject<any>('settingsState')!;
           </el-select>
         </div>
         <div class="oplog-filter-right">
-          <el-button size="small" @click="state.exportOpLogs"><el-icon><Download /></el-icon>导出</el-button>
+          <el-button size="small" @click="state.exportOpLogs"><el-icon><Download /></el-icon>导出Excel</el-button>
           <el-button size="small" text @click="state.resetOpLogFilter"><el-icon><RefreshRight /></el-icon>重置</el-button>
           <span class="oplog-count">共 {{ state.opLogs.length }} 条</span>
         </div>

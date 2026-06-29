@@ -22,7 +22,6 @@
     "better-sqlite3": "^11.0.0",
     "element-plus": "^2.14.2",
     "exceljs": "^4.4.0",
-    "html2canvas": "^1.4.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },

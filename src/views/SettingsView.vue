@@ -9,6 +9,7 @@ import {
 import { getFinanceApi } from '../api';
 import { useAuth } from '../auth';
 import SettingsSubView from '../components/SettingsSubView.vue';
+import { downloadExcel } from '../utils/excelExport';
 import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo, OpLogEntry, AuxProjectType, AuxProjectValue } from '../api';
 
 const api = getFinanceApi();
@@ -535,19 +536,23 @@ function resetOpLogFilter() {
   loadOpLogs();
 }
 
-function exportOpLogs() {
+async function exportOpLogs() {
   if (opLogs.value.length === 0) { ElMessage.warning('无日志可导出'); return; }
-  const csv = ['\uFEFF日期,操作类型,目标,详情,用户']
-    .concat(opLogs.value.map(l =>
-      `${l.createdAt},${l.action},"${l.target}","${l.detail}",${l.username}`
-    )).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `操作日志_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const columns = [
+    { header: '日期', key: '日期', width: 20 },
+    { header: '操作类型', key: '操作类型', width: 14 },
+    { header: '目标', key: '目标', width: 30 },
+    { header: '详情', key: '详情', width: 40 },
+    { header: '用户', key: '用户', width: 14 },
+  ];
+  const rows = opLogs.value.map(l => ({
+    '日期': l.createdAt || '',
+    '操作类型': l.action || '',
+    '目标': l.target || '',
+    '详情': l.detail || '',
+    '用户': l.username || '',
+  }));
+  await downloadExcel(columns, rows, `操作日志_${new Date().toISOString().slice(0, 10)}.xlsx`, '操作日志');
   ElMessage.success('操作日志已导出');
 }
 

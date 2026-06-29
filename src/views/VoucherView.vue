@@ -2,15 +2,17 @@
 // ponytail: 记账凭证管理页面 — 列表/审核/过账/打印/断号/导出
 import { computed, onMounted, ref, shallowRef } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Plus, Refresh, TrendCharts, Printer, View, Download, Search } from '@element-plus/icons-vue';
+import { Plus, Refresh, TrendCharts, Printer, View, Search, Document } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import VoucherModal from '../components/VoucherModal.vue';
 import VoucherListTable from '../components/VoucherListTable.vue';
-import { handlePrintVoucher } from '../utils/printVoucher';
-import { voucherTableCss, buildVoucherExportHtml } from '../utils/voucherTemplate';
+import { handlePrintVoucher, buildVoucherPrintHtml } from '../utils/printVoucher';
+import { downloadExcel } from '../utils/excelExport';
+import { useAuth } from '../auth';
 import type { FinanceVoucher } from '../api';
 
 const api = getFinanceApi();
+const auth = useAuth();
 const vouchers = shallowRef<FinanceVoucher[]>([]);
 const loading = ref(false);
 const modalOpen = ref(false);
@@ -85,71 +87,119 @@ async function handleReorder() {
   refresh();
 }
 
-/** 打印凭证 */
+/** 打印凭证（弹出打印对话框，支持另存为 PDF） */
 async function handlePrint(v: FinanceVoucher) {
   const warning = await handlePrintVoucher(v);
   if (warning) ElMessage.warning(warning);
 }
 
-/** 导出选中的凭证为 PNG（离屏渲染，不弹窗） */
-async function handleExport() {
+/** 带超时的 IPC 调用（避免主进程挂起导致按钮永远 loading） */
+function invokeWithTimeout<T>(channel: string, args: any, timeoutMs = 35000): Promise<T> {
+  return Promise.race([
+    window.electronAPI!.invoke(channel, args) as Promise<T>,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${channel} 操作超时`)), timeoutMs)
+    ),
+  ]);
+}
+
+/** 导出选中的凭证为 PDF（自动生成文件名，直接保存） */
+async function handleExportPdf() {
   if (selectedVouchers.value.length === 0) {
     ElMessage.warning('请先勾选需要导出的凭证');
     return;
   }
   exporting.value = true;
-
-  // 动态加载 html2canvas（仅导出时加载，减小首屏体积）
-  const { default: html2canvas } = await import('html2canvas');
-
-  // 一次性注入共享样式
-  const styleId = '__vch-export-style';
-  if (!document.getElementById(styleId)) {
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = voucherTableCss;
-    document.head.appendChild(style);
-  }
-
   let successCount = 0;
   let failCount = 0;
+  try {
+    for (const v of selectedVouchers.value) {
+      const html = buildVoucherPrintHtml(v);
+      try {
+        const pdfResult = await invokeWithTimeout<{ success?: boolean; dataUrl?: string; error?: string }>('print-voucher-pdf', { html });
+        if (!pdfResult?.success || !pdfResult?.dataUrl) {
+          const errMsg = pdfResult?.error || 'PDF 生成失败';
+          console.warn(`[导出PDF] ${v.voucher_word}-${v.voucher_no}: ${errMsg}`);
+          failCount++;
+          continue;
+        }
+        const dateStr = (v.voucher_date || '').replace(/[: ]/g, '-').substring(0, 10);
+        const company = auth.state.user?.companyName || 'ERP';
+        const fileName = `${company}_${v.voucher_word}${String(v.voucher_no).padStart(3, '0')}_${dateStr}.pdf`;
 
-  for (const v of selectedVouchers.value) {
-    const container = document.createElement('div');
-    container.style.cssText = 'position:absolute;left:-9999px;top:0;';
-    container.innerHTML = buildVoucherExportHtml(v);
-    document.body.appendChild(container);
+        const saveResult = await window.electronAPI!.invoke('save-file-dialog', {
+          dataUrl: pdfResult.dataUrl,
+          defaultName: fileName,
+          filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
+        }) as { success?: boolean; canceled?: boolean; error?: string };
 
-    await new Promise(r => setTimeout(r, 50));
-
-    try {
-      const canvas = await html2canvas(container, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      });
-      const dataUrl = canvas.toDataURL('image/png');
-      const dateStr = (v.voucher_date || '').replace(/[: ]/g, '-').substring(0, 10);
-      const fileName = `${v.voucher_word}-${String(v.voucher_no).padStart(3, '0')}_${dateStr}.png`;
-
-      const result = await window.electronAPI!.invoke('save-png', { dataUrl, fileName }) as { success?: boolean; error?: string };
-      if (result?.success) successCount++;
-      else { failCount++; console.error(`保存失败 [${fileName}]:`, result?.error); }
-    } catch (e) {
-      console.error('导出凭证失败:', e);
-      failCount++;
-    } finally {
-      document.body.removeChild(container);
+        if (saveResult?.canceled) {
+          // 用户取消后续保存
+          ElMessage.warning(`已取消剩余 ${selectedVouchers.value.length - successCount - failCount} 张凭证的导出`);
+          break;
+        }
+        if (saveResult?.success) successCount++;
+        else failCount++;
+      } catch (e: any) {
+        console.warn(`[导出PDF] ${v.voucher_word}-${v.voucher_no} 异常:`, e?.message || e);
+        failCount++;
+      }
     }
+    if (failCount === 0 && successCount > 0) {
+      ElMessage.success(`已导出 ${successCount} 张凭证 PDF`);
+    } else if (successCount > 0) {
+      ElMessage.warning(`导出完成：${successCount} 成功，${failCount} 失败`);
+    } else if (failCount > 0) {
+      ElMessage.error(`导出失败：${failCount} 张凭证 PDF 生成失败，请检查控制台日志`);
+    }
+  } catch (e: any) {
+    ElMessage.error('导出失败：' + (e?.message || '未知错误'));
+  } finally {
+    exporting.value = false;
   }
+}
 
-  if (failCount === 0) {
-    ElMessage.success(`已导出 ${successCount} 张凭证`);
-  } else {
-    ElMessage.warning(`导出完成：${successCount} 成功，${failCount} 失败`);
+/** 导出选中的凭证为 Excel 数据表 */
+async function handleExportExcel() {
+  if (selectedVouchers.value.length === 0) {
+    ElMessage.warning('请先勾选需要导出的凭证');
+    return;
   }
-  exporting.value = false;
+  exporting.value = true;
+  try {
+    const rows: Record<string, any>[] = [];
+    for (const v of selectedVouchers.value) {
+      for (const e of v.entries) {
+        rows.push({
+          凭证字: v.voucher_word,
+          凭证号: v.voucher_no,
+          日期: v.voucher_date || '',
+          摘要: e.summary || '',
+          科目编码: e.subject_code || '',
+          科目名称: e.subject_name || '',
+          借方金额: Number(e.debit) || 0,
+          贷方金额: Number(e.credit) || 0,
+        });
+      }
+    }
+    const columns = [
+      { header: '凭证字', key: '凭证字', width: 10 },
+      { header: '凭证号', key: '凭证号', width: 10 },
+      { header: '日期', key: '日期', width: 14 },
+      { header: '摘要', key: '摘要', width: 30 },
+      { header: '科目编码', key: '科目编码', width: 16 },
+      { header: '科目名称', key: '科目名称', width: 24 },
+      { header: '借方金额', key: '借方金额', width: 16 },
+      { header: '贷方金额', key: '贷方金额', width: 16 },
+    ];
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    await downloadExcel(columns, rows, `凭证明细_${ts}`, '凭证明细');
+    ElMessage.success(`已导出 ${selectedVouchers.value.length} 张凭证，共 ${rows.length} 条分录`);
+  } catch (e: any) {
+    ElMessage.error('导出失败：' + (e?.message || '未知错误'));
+  } finally {
+    exporting.value = false;
+  }
 }
 
 /* 批量操作 */
@@ -230,8 +280,11 @@ async function handleBatchDelete() {
           批量删除{{ selectedVouchers.filter(v=>v.status==='draft').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='draft').length})` : '' }}
         </el-button>
         <!-- 工具：导出 -->
-        <el-button type="success" :loading="exporting" :disabled="selectedVouchers.length === 0" @click="handleExport">
-          <el-icon><Download /></el-icon>导出PNG{{ selectedVouchers.length > 0 ? `(${selectedVouchers.length})` : '' }}
+        <el-button type="success" :loading="exporting" :disabled="selectedVouchers.length === 0" @click="handleExportExcel">
+          <el-icon><Document /></el-icon>导出Excel{{ selectedVouchers.length > 0 ? `(${selectedVouchers.length})` : '' }}
+        </el-button>
+        <el-button type="success" :loading="exporting" :disabled="selectedVouchers.length === 0" @click="handleExportPdf">
+          <el-icon><Printer /></el-icon>导出PDF{{ selectedVouchers.length > 0 ? `(${selectedVouchers.length})` : '' }}
         </el-button>
         <!-- 维护 -->
         <el-button @click="handleReorder"><el-icon><TrendCharts /></el-icon>整理断号</el-button>
@@ -262,7 +315,7 @@ async function handleBatchDelete() {
               <el-button v-if="row.status==='audited'" size="small" link type="danger" @click="handleUnaudit(row)">反审核</el-button>
               <el-button v-if="row.status==='audited'" size="small" link type="primary" @click="handlePost(row)">过账</el-button>
               <el-button v-if="row.status==='posted'" size="small" link type="danger" @click="handleUnpost(row)">反过账</el-button>
-              <el-button size="small" link @click="handlePrint(row)"><el-icon><Printer /></el-icon>打印</el-button>
+              <el-button size="small" link @click="handlePrint(row)"><el-icon><Printer /></el-icon>打印/PDF</el-button>
               <el-popconfirm v-if="row.status==='draft'" title="确定删除此凭证？" @confirm="handleDelete(row)">
                 <template #reference>
                   <el-button size="small" link type="danger">删除</el-button>

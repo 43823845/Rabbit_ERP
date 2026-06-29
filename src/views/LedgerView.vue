@@ -10,6 +10,7 @@ import type { SubjectBalance, FinanceSubject, MultiColumnLedgerResult, MultiColu
   TrialBalance,
   DetailLedgerResult } from '../api';
 import { buildTreeOrderedSubjects } from '../utils/subjects';
+import { downloadExcel } from '../utils/excelExport';
 
 /* 科目树节点（带 children） */
 interface SubjectTreeNode extends FinanceSubject {
@@ -702,26 +703,10 @@ async function loadData() {
   } finally { loading.value = false; }
 }
 
-/* ===== 通用 CSV 导出 ===== */
-function downloadCsv(headers: string[], rows: Array<Record<string, string | number>>, filename: string) {
-  const lines: string[] = ['\uFEFF' + headers.join(',')]; // BOM for Excel
-  for (const row of rows) {
-    const vals = headers.map(h => {
-      const v = row[h];
-      if (v === null || v === undefined) return '';
-      const s = String(v);
-      // 如果包含逗号、引号或换行，用双引号包裹
-      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
-    });
-    lines.push(vals.join(','));
-  }
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+/* ===== 通用 Excel 导出 ===== */
+async function downloadExcelBook(headers: string[], rows: Array<Record<string, string | number>>, filename: string) {
+  const columns = headers.map(h => ({ header: h, key: h, width: 18 }));
+  await downloadExcel(columns, rows, filename, 'Sheet1');
 }
 
 function exportCurrentBook() {
@@ -733,7 +718,7 @@ function exportCurrentBook() {
   if (bookKey === 'multiColumn' && mcResult.value) {
     const { columns, rows } = mcResult.value;
     const headers = ['日期', '凭证字号', '摘要', ...columns.map((c) => `${c.code} ${c.name}(借)`), ...columns.map((c) => `${c.code} ${c.name}(贷)`), '借方合计', '贷方合计', '余额'];
-    const csvRows = rows.map((r) => {
+    const exportRows = rows.map((r) => {
       const debits = r.cells.map((cell) => cell.debit);
       const credits = r.cells.map((cell) => cell.credit);
       const totalDebit = debits.reduce((s, v) => s + v, 0);
@@ -745,57 +730,57 @@ function exportCurrentBook() {
         '借方合计': totalDebit, '贷方合计': totalCredit, '余额': totalDebit - totalCredit,
       };
     });
-    downloadCsv(headers, csvRows, `多栏账_${mcParentCode.value}_${ts}.csv`);
+    downloadExcelBook(headers, exportRows, `多栏账_${mcParentCode.value}_${ts}.xlsx`);
     return;
   }
 
   // 数量金额明细账
   if (bookKey === 'qtyDetail' && qdRows.value.length > 0) {
     const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '数量', '单价', '单位'];
-    const csvRows = qdRows.value.map(r => ({
+    const rows = qdRows.value.map(r => ({
       '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word}-${r.voucher_no}`, '摘要': r.summary || '',
       '借方金额': r.debit, '贷方金额': r.credit, '数量': r.quantity, '单价': r.unit_price, '单位': r.unit || '',
     }));
-    downloadCsv(headers, csvRows, `数量金额明细账_${qdSubjectCode.value}_${ts}.csv`);
+    downloadExcelBook(headers, rows, `数量金额明细账_${qdSubjectCode.value}_${ts}.xlsx`);
     return;
   }
 
   // 数量金额总账
   if (bookKey === 'qtyGeneral' && qgRows.value.length > 0) {
     const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '数量(收)', '数量(付)', '净数量', '单位'];
-    const csvRows = qgRows.value.map(r => ({
+    const rows = qgRows.value.map(r => ({
       '科目编码': r.code, '科目名称': r.name,
       '借方金额': r.total_debit, '贷方金额': r.total_credit,
       '数量(收)': r.in_quantity, '数量(付)': r.out_quantity, '净数量': r.net_quantity,
       '单位': r.unit || '',
     }));
-    downloadCsv(headers, csvRows, `数量金额总账_${ts}.csv`);
+    downloadExcelBook(headers, rows, `数量金额总账_${ts}.xlsx`);
     return;
   }
 
   // 核算项目余额表
   if (bookKey === 'projectBalance' && pbRows.value.length > 0) {
     const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '余额方向', '余额'];
-    const csvRows = pbRows.value.map(r => ({
+    const rows = pbRows.value.map(r => ({
       '科目编码': r.subject_code, '科目名称': r.subject_name,
       '借方金额': r.debit_amount, '贷方金额': r.credit_amount,
       '余额方向': r.debit_amount >= r.credit_amount ? '借' : '贷',
       '余额': Math.abs(r.debit_amount - r.credit_amount),
     }));
-    downloadCsv(headers, csvRows, `核算项目余额表_${ts}.csv`);
+    downloadExcelBook(headers, rows, `核算项目余额表_${ts}.xlsx`);
     return;
   }
 
   // 核算项目明细账
   if (bookKey === 'projectDetail' && pdRows.value.length > 0) {
     const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '余额方向', '余额'];
-    const csvRows = pdRows.value.map(r => ({
+    const rows = pdRows.value.map(r => ({
       '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word || ''}-${r.voucher_no || ''}`,
       '摘要': r.summary || '', '借方金额': r.debit, '贷方金额': r.credit,
       '余额方向': (r.debit || 0) >= (r.credit || 0) ? '借' : '贷',
       '余额': Math.abs((r.debit || 0) - (r.credit || 0)),
     }));
-    downloadCsv(headers, csvRows, `核算项目明细账_${ts}.csv`);
+    downloadExcelBook(headers, rows, `核算项目明细账_${ts}.xlsx`);
     return;
   }
 
@@ -803,7 +788,7 @@ function exportCurrentBook() {
   if (bookKey === 'projectCombo' && pcData.value && pcData.value.rows.length > 0) {
     const d = pcData.value;
     const headers = ['科目编码', '科目名称', ...d.columns.flatMap(c => [`${c.value_code} ${c.value_name}(借)`, `${c.value_code} ${c.value_name}(贷)`])];
-    const csvRows = d.rows.map(r => {
+    const rows = d.rows.map(r => {
       const row: Record<string, string | number> = { '科目编码': r.subject_code, '科目名称': r.subject_name };
       d.columns.forEach((c, i) => {
         row[`${c.value_code} ${c.value_name}(借)`] = r.cells[i].debit || 0;
@@ -811,7 +796,7 @@ function exportCurrentBook() {
       });
       return row;
     });
-    downloadCsv(headers, csvRows, `核算项目组合表_${ts}.csv`);
+    downloadExcelBook(headers, rows, `核算项目组合表_${ts}.xlsx`);
     return;
   }
 
@@ -1036,21 +1021,18 @@ function handlePrint() {
   window.print();
 }
 
-/* ---- 导出 CSV 通用工具 ---- */
-function exportCSV(headers: string[], rows: string[][], bookName: string) {
+/* ---- 导出 Excel 通用工具 ---- */
+async function exportExcelSheet(headers: string[], rows: string[][], bookName: string) {
+  const columns = headers.map(h => ({ header: h, key: h, width: 18 }));
+  const objRows = rows.map(row => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = String(row[i] ?? ''); });
+    return obj;
+  });
   const now = new Date();
   const month = period.value;
   const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-  const csv = '\uFEFF' + [headers, ...rows]
-    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${bookName}_${month}_${time}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  await downloadExcel(columns, objRows, `${bookName}_${month}_${time}.xlsx`, bookName);
 }
 
 /* ---- 明细账导出 ---- */
@@ -1069,7 +1051,7 @@ function handleExportDetail() {
     r.direction,
     r.balance.toFixed(2),
   ]);
-  exportCSV(headers, rows, `明细账_${detailSubjectCode.value || '未选'}`);
+  exportExcelSheet(headers, rows, `明细账_${detailSubjectCode.value || '未选'}`);
   ElMessage.success('明细账导出成功');
 }
 
@@ -1089,7 +1071,7 @@ function handleExportGeneral() {
     r.direction,
     r.balance.toFixed(2),
   ]);
-  exportCSV(headers, rows, '总账');
+  exportExcelSheet(headers, rows, '总账');
   ElMessage.success('总账导出成功');
 }
 
@@ -1109,7 +1091,7 @@ function handleExportBalance() {
     r.creditAmount !== 0 ? r.creditAmount.toFixed(2) : '',
     r.endingBalance !== 0 ? r.endingBalance.toFixed(2) : '',
   ]);
-  exportCSV(headers, rows, '科目余额表');
+  exportExcelSheet(headers, rows, '科目余额表');
   ElMessage.success('科目余额表导出成功');
 }
 
@@ -1140,7 +1122,7 @@ function handleExportTrialBalance() {
     tbData.value.totals.endingDebit.toFixed(2),
     tbData.value.totals.endingCredit.toFixed(2),
   ]);
-  exportCSV(headers, rows, '试算平衡表');
+  exportExcelSheet(headers, rows, '试算平衡表');
   ElMessage.success('试算平衡表导出成功');
 }
 </script>

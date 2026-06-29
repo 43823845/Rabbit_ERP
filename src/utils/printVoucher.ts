@@ -2,8 +2,11 @@
 import { voucherTableCss, buildVoucherExportHtml } from './voucherTemplate';
 import type { FinanceVoucher } from '../api';
 
-export async function handlePrintVoucher(voucher: FinanceVoucher): Promise<string | void> {
-  const html = `<!DOCTYPE html>
+/**
+ * 构建凭证打印/PDF 完整 HTML（复用模板）
+ */
+export function buildVoucherPrintHtml(voucher: FinanceVoucher): string {
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -32,6 +35,10 @@ export async function handlePrintVoucher(voucher: FinanceVoucher): Promise<strin
   </div>
 </body>
 </html>`;
+}
+
+export async function handlePrintVoucher(voucher: FinanceVoucher): Promise<string | void> {
+  const html = buildVoucherPrintHtml(voucher);
 
   try {
     const result: any = await window.electronAPI!.invoke('print-voucher', { html });

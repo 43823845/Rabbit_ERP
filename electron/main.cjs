@@ -227,30 +227,112 @@ function registerIpc() {
         },
       });
 
-      const dataUrl = 'data:text/html;charset=UTF-8,' + encodeURIComponent(html);
-      printWin.loadURL(dataUrl);
+      let resolved = false;
+      const done = (result) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
+        if (!printWin.isDestroyed()) {
+          printWin.close();
+        }
+        resolve(result);
+      };
+
+      const timeoutId = setTimeout(() => {
+        done({ success: false, reason: '打印窗口加载超时' });
+      }, 30000);
+
+      printWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+        done({ success: false, reason: `页面加载失败: ${errorDescription} (code=${errorCode})` });
+      });
 
       printWin.webContents.on('did-finish-load', () => {
         // webContents.print() 直接弹出系统打印对话框（自带预览），不另开窗口
         printWin.webContents.print({}, (success, reason) => {
-          resolve({ success, reason: reason || '' });
-          printWin.close();
+          done({ success, reason: reason || '' });
         });
       });
+
+      const dataUrl = 'data:text/html;charset=UTF-8,' + encodeURIComponent(html);
+      printWin.loadURL(dataUrl);
     });
   });
 
-  /* 保存 PNG 到 程序根目录/导出凭据/ */
-  ipcMain.handle('save-png', async (_e, { dataUrl, fileName }) => {
+  /* 凭证导出 PDF：静默生成 PDF 文件（不弹出打印对话框） */
+  ipcMain.handle('print-voucher-pdf', async (_e, { html }) => {
+    return new Promise((resolve) => {
+      const printWin = new BrowserWindow({
+        width: 1050,
+        height: 800,
+        show: false,
+        webPreferences: {
+          contextIsolation: false,
+          nodeIntegration: false,
+        },
+      });
+
+      // 超时保护：30 秒后强制退出
+      const timeoutId = setTimeout(() => {
+        if (!printWin.isDestroyed()) {
+          printWin.close();
+        }
+        resolve({ success: false, error: 'PDF 生成超时（30 秒）' });
+      }, 30000);
+
+      let resolved = false;
+      const done = (result) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
+        if (!printWin.isDestroyed()) {
+          printWin.close();
+        }
+        resolve(result);
+      };
+
+      // 捕获页面加载失败
+      printWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+        done({ success: false, error: `页面加载失败: ${errorDescription} (code=${errorCode})` });
+      });
+
+      // 页面加载完成 → 生成 PDF
+      printWin.webContents.on('did-finish-load', async () => {
+        try {
+          const pdfBuffer = await printWin.webContents.printToPDF({
+            printBackground: true,
+            preferCSSPageSize: true,
+            marginsType: 2, // 使用最小边距（由系统决定），CSS 内已有 16px 内边距
+          });
+          const base64 = pdfBuffer.toString('base64');
+          done({ success: true, dataUrl: `data:application/pdf;base64,${base64}` });
+        } catch (e) {
+          done({ success: false, error: e.message });
+        }
+      });
+
+      const dataUrl = 'data:text/html;charset=UTF-8,' + encodeURIComponent(html);
+      printWin.loadURL(dataUrl);
+    });
+  });
+
+  /* 保存文件：弹出系统保存对话框 */
+  ipcMain.handle('save-file-dialog', async (_e, { dataUrl, defaultName, filters }) => {
     try {
+      const { dialog } = require('electron');
+      const mainWin = BrowserWindow.getFocusedWindow();
+      if (!mainWin) return { canceled: true };
+
+      const result = await dialog.showSaveDialog(mainWin, {
+        defaultPath: defaultName || 'export.xlsx',
+        filters: filters || [{ name: 'Excel 文件', extensions: ['xlsx'] }],
+      });
+
+      if (result.canceled || !result.filePath) return { canceled: true };
+
       const fs = require('node:fs');
-      const appRoot = app.isPackaged ? path.dirname(app.getPath('exe')) : path.join(__dirname, '..');
-      const exportDir = path.join(appRoot, '导出凭据');
-      const fullPath = path.join(exportDir, fileName);
-      fs.mkdirSync(exportDir, { recursive: true });
-      const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
-      fs.writeFileSync(fullPath, Buffer.from(base64, 'base64'));
-      return { success: true, path: fullPath };
+      const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+      fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'));
+      return { success: true, path: result.filePath };
     } catch (e) {
       return { success: false, error: e.message };
     }
