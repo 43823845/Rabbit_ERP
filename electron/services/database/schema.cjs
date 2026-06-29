@@ -174,7 +174,7 @@ const DDL = `
   CREATE TABLE IF NOT EXISTS report_template (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,
-    report_type TEXT NOT NULL CHECK(report_type IN ('profit','balance')),
+    report_type TEXT NOT NULL CHECK(report_type IN ('profit','balance','equity_change','tax_detail')),
     section TEXT DEFAULT '',
     row_no INTEGER NOT NULL,
     name TEXT NOT NULL,

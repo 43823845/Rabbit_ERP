@@ -137,6 +137,79 @@ function applyAuxiliaryMethods(FinanceDatabase) {
     return { rows, total };
   };
 
+  // ---- 核算项目组合表（交叉表） ----
+
+  /**
+   * 核算项目组合表：按核算类别展示各科目在各项目值下的借贷发生额
+   * 输出格式：columns(项目值列表) + rows(每科目一行，cells 与 columns 对应)
+   */
+  proto.getAuxProjectCombo = function ({ period, auxTypeId }) {
+    if (!this.db) return { columns: [], rows: [] };
+    this._ensureBookId();
+
+    let conds = " AND v.status = 'posted' AND v.book_id = ?";
+    const params = [this.currentBookId];
+    if (period) { conds += ' AND v.period = ?'; params.push(period); }
+    if (auxTypeId) { conds += ' AND e.aux_type_id = ?'; params.push(auxTypeId); }
+
+    // 获取所有有辅助核算的科目
+    const rawRows = this.db.prepare(`
+      SELECT e.aux_type_id, e.aux_value_id, e.subject_code, e.subject_name,
+             SUM(e.debit) AS debit_amount, SUM(e.credit) AS credit_amount
+      FROM gl_voucher_entry e
+      JOIN gl_voucher v ON v.id = e.voucher_id
+      WHERE 1=1 ${conds} AND e.aux_type_id IS NOT NULL AND e.aux_value_id IS NOT NULL
+      GROUP BY e.aux_type_id, e.aux_value_id, e.subject_code, e.subject_name
+      ORDER BY e.subject_code, e.aux_value_id
+    `).all(...params);
+
+    if (rawRows.length === 0) return { columns: [], rows: [] };
+
+    // 获取项目值信息作为列
+    const usedValueIds = [...new Set(rawRows.map(r => r.aux_value_id))];
+    const vp = usedValueIds.map(() => '?').join(',');
+    const valueInfos = this.db.prepare(
+      `SELECT id, code, name FROM aux_project_value WHERE id IN (${vp}) ORDER BY code`
+    ).all(...usedValueIds);
+
+    const columns = valueInfos.map(v => ({
+      value_id: v.id,
+      value_code: v.code,
+      value_name: v.name,
+    }));
+
+    // 按科目分组，构造行数据
+    const subjectMap = new Map();
+    for (const r of rawRows) {
+      if (!subjectMap.has(r.subject_code)) {
+        subjectMap.set(r.subject_code, {
+          subject_code: r.subject_code,
+          subject_name: r.subject_name,
+          cells: columns.map(() => ({ debit: 0, credit: 0 })),
+        });
+      }
+      const row = subjectMap.get(r.subject_code);
+      const colIdx = columns.findIndex(c => c.value_id === r.aux_value_id);
+      if (colIdx >= 0) {
+        row.cells[colIdx].debit += Math.round((r.debit_amount || 0) * 100) / 100;
+        row.cells[colIdx].credit += Math.round((r.credit_amount || 0) * 100) / 100;
+      }
+    }
+
+    const rows = [...subjectMap.values()];
+    // 计算总计行
+    const totals = columns.map((col, ci) => {
+      let totalDebit = 0, totalCredit = 0;
+      for (const row of rows) {
+        totalDebit += row.cells[ci].debit;
+        totalCredit += row.cells[ci].credit;
+      }
+      return { debit: Math.round(totalDebit * 100) / 100, credit: Math.round(totalCredit * 100) / 100 };
+    });
+
+    return { columns, rows, totals };
+  };
+
   /**
    * 为当前账套预置辅助核算类别
    */

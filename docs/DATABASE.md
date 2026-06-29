@@ -219,3 +219,23 @@ draft（草稿）──审核→ audited（已审核）──过账→ posted（
 ```
 
 ---
+
+## 7. 报告模板表 (report_template)
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER PK | 自增主键 |
+| report_type | TEXT NOT NULL | 报告类型：profit / balance / equity_change / tax_detail |
+| row_no | INTEGER | 行号（排序） |
+| section | TEXT | 分组（如 一、实收资本） |
+| name | TEXT | 项目名称 |
+| formula | TEXT | 计算公式（科目编码 + 运算） |
+| bold | INTEGER | 是否加粗 0/1 |
+| indent | INTEGER | 缩进级别 0/1/2 |
+| created_at | TEXT | 创建时间 |
+
+**CHECK 约束**：`report_type IN ('profit', 'balance', 'equity_change', 'tax_detail')`
+
+> **v1.2 扩展**：`report_type` 新增 `equity_change`（所有者权益变动表，22行）和 `tax_detail`（应交税费明细表，18行）两种模板类型。
+
+---

@@ -2,7 +2,7 @@
 // ponytail: 根组件 — 侧栏导航/顶栏/主内容区/公司切换/Electron窗口控制
 import { computed, onMounted, onUnmounted, ref, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Grid, Tools, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument, TrendCharts, Coin } from '@element-plus/icons-vue';
+import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Grid, Tools, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument, TrendCharts, Coin, Lock } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { useAuth } from './auth';
 import { getFinanceApi } from './api';
@@ -82,16 +82,41 @@ function handleMenuClick(key: string) {
 
 const companiesCache = ref<Company[]>([]);
 const companiesLoaded = ref(false);
+const companiesLoading = ref(false);
+
+const displayedCompanyCount = computed(() => {
+  if (companies.value.length > 0) return `${companies.value.length}个`;
+  if (companiesLoading.value) return '加载中...';
+  if (companiesCache.value.length > 0) return `${companiesCache.value.length}个`;
+  return '0个';
+});
 
 async function loadCompanies() {
-  companies.value = await api.getCompanies();
-  companiesCache.value = companies.value;
-  companiesLoaded.value = true;
+  companiesLoading.value = true;
+  try {
+    companies.value = await api.getCompanies();
+    companiesCache.value = companies.value;
+  } catch {
+    // 获取失败时保留旧数据，不覆盖
+    if (companiesCache.value.length > 0) {
+      companies.value = companiesCache.value;
+    }
+  } finally {
+    companiesLoaded.value = true;
+    companiesLoading.value = false;
+  }
 }
 
 async function refreshCompanies() {
-  companies.value = await api.getCompanies();
-  companiesCache.value = companies.value;
+  try {
+    companies.value = await api.getCompanies();
+    companiesCache.value = companies.value;
+  } catch {
+    // 刷新失败时保留旧数据
+    if (companiesCache.value.length > 0 && companies.value.length === 0) {
+      companies.value = companiesCache.value;
+    }
+  }
   companiesLoaded.value = true;
 }
 
@@ -116,8 +141,38 @@ function handleLogout() {
   router.replace('/login');
 }
 
+/* ---- 自改密码 ---- */
+const pwdDialogVisible = ref(false);
+const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' });
+const savingPwd = ref(false);
+
+function openChangePwd() {
+  pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' };
+  pwdDialogVisible.value = true;
+}
+
+async function submitChangePwd() {
+  if (!pwdForm.value.oldPassword || !pwdForm.value.newPassword) {
+    ElMessage.warning('请填写完整密码信息'); return;
+  }
+  if (pwdForm.value.newPassword.length < 4) {
+    ElMessage.warning('密码至少4位'); return;
+  }
+  if (pwdForm.value.newPassword !== pwdForm.value.confirmPassword) {
+    ElMessage.warning('两次输入的新密码不一致'); return;
+  }
+  savingPwd.value = true;
+  try {
+    await api.changePassword(pwdForm.value.oldPassword, pwdForm.value.newPassword);
+    ElMessage.success('密码已修改，下次登录请使用新密码');
+    pwdDialogVisible.value = false;
+  } catch (e: any) { ElMessage.error(e?.message || '密码修改失败'); }
+  finally { savingPwd.value = false; }
+}
+
 function handleUserCmd(cmd: string) {
   if (cmd === 'logout') handleLogout();
+  if (cmd === 'changePwd') openChangePwd();
 }
 </script>
 
@@ -156,7 +211,7 @@ function handleUserCmd(cmd: string) {
           <span class="topbar-link">
             <el-icon><Sort /></el-icon>
             {{ auth.state.user?.companyName || '未选择' }}
-            <el-tag type="primary" size="small" effect="plain" style="margin-left:4px;font-size:10px;">{{ companies.length }}个</el-tag>
+            <el-tag type="primary" size="small" effect="plain" style="margin-left:4px;font-size:10px;">{{ displayedCompanyCount }}</el-tag>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
@@ -181,6 +236,9 @@ function handleUserCmd(cmd: string) {
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="changePwd">
+                <el-icon><Lock /></el-icon> 修改密码
+              </el-dropdown-item>
               <el-dropdown-item command="logout">
                 <el-icon><SwitchButton /></el-icon> 退出登录
               </el-dropdown-item>
@@ -229,6 +287,25 @@ function handleUserCmd(cmd: string) {
         <router-view :key="routerViewKey" />
       </main>
     </div>
+
+    <!-- ========== 修改密码对话框 ========== -->
+    <el-dialog v-model="pwdDialogVisible" title="修改密码" width="420px" :close-on-click-modal="false" draggable append-to-body>
+      <el-form :model="pwdForm" label-width="90px">
+        <el-form-item label="原密码">
+          <el-input v-model="pwdForm.oldPassword" type="password" show-password placeholder="请输入原密码" />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="请输入新密码（至少4位）" />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="pwdForm.confirmPassword" type="password" show-password placeholder="请再次输入新密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingPwd" @click="submitChangePwd">确认修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

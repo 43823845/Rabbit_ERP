@@ -203,7 +203,7 @@ app.on('will-quit', () => {
 });
 
 function registerIpc() {
-  const wrap = (name, fn) => ipcMain.handle(`finance:${name}`, (_e, p) => { try { return fn(p); } catch (err) { return { __error: err.message }; } });
+  const wrap = (name, fn) => ipcMain.handle(`finance:${name}`, (_e, p) => { try { return fn(p); } catch (err) { console.error(`[IPC] finance:${name} error:`, err); return { __error: err.message }; } });
 
   /* 窗口控制 */
   ipcMain.handle('window:min', () => { BrowserWindow.getFocusedWindow()?.minimize(); });
@@ -281,6 +281,7 @@ function registerIpc() {
   wrap('createUser', (p) => database.createUser(p || {}));
   wrap('updateUser', (p) => database.updateUser(p || {}));
   wrap('changePassword', (p) => database.changePassword(p || {}));
+  wrap('resetPassword', (p) => database.resetPassword(p || {}));
   wrap('getUserProfile', (userId) => database.getUserProfile(userId));
 
   wrap('bootstrap', () => database.getBootstrapData());
@@ -327,6 +328,11 @@ function registerIpc() {
   wrap('getBalanceSheet', (period) => database.getBalanceSheet(period));
   wrap('getCashFlowStatement', (period) => database.getCashFlowStatement(period));
   wrap('checkYearEndIntegrity', (period) => database.checkYearEndIntegrity(period));
+  wrap('getEquityChangeStatement', (period) => database.getEquityChangeStatement(period));
+  wrap('getTaxPayableDetail', (period) => database.getTaxPayableDetail(period));
+  wrap('getExpenseSummary', (period) => database.getExpenseSummary(period));
+  wrap('getReceivableAging', (period) => database.getReceivableAging(period));
+  wrap('getPayableAging', (period) => database.getPayableAging(period));
 
   /* 固定资产 */
   wrap('listAssetCards', (f) => database.listAssetCards(f || {}));
@@ -336,6 +342,7 @@ function registerIpc() {
   wrap('deleteAssetCard', (id) => database.deleteAssetCard(id));
   wrap('depreciateAsset', (p) => database.depreciateAsset(p.id, p.periods || 1));
   wrap('getAssetStats', () => database.getAssetStats());
+  wrap('getDepreciationSummary', (period) => database.getDepreciationSummary(period));
 
   /* aux project types */
   wrap('listAuxProjectTypes', () => database.listAuxProjectTypes());
@@ -363,6 +370,7 @@ function registerIpc() {
   /* aux project reports */
   wrap('getAuxProjectBalance', (f) => database.getAuxProjectBalance(f || {}));
   wrap('getAuxProjectDetail', (f) => database.getAuxProjectDetail(f || {}));
+  wrap('getAuxProjectCombo', (f) => database.getAuxProjectCombo(f || {}));
 
   /* voucher words */
   wrap('listVoucherWords', () => database.listVoucherWords());

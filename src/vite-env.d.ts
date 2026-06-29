@@ -314,6 +314,30 @@ export interface AuxProjectDetailRow extends DetailLedgerRow {
   aux_value_id: number;
 }
 
+/* ---- 核算项目组合表 ---- */
+export interface AuxProjectComboColumn {
+  value_id: number;
+  value_code: string;
+  value_name: string;
+}
+
+export interface AuxProjectComboCell {
+  debit: number;
+  credit: number;
+}
+
+export interface AuxProjectComboRow {
+  subject_code: string;
+  subject_name: string;
+  cells: AuxProjectComboCell[];
+}
+
+export interface AuxProjectCombo {
+  columns: AuxProjectComboColumn[];
+  rows: AuxProjectComboRow[];
+  totals: AuxProjectComboCell[];
+}
+
 export interface MultiColumnScheme {
   id: number;
   book_id: number;
@@ -444,6 +468,110 @@ export interface VoucherSummary {
   createdAt: string;
 }
 
+/* ---- 所有者权益变动表 ---- */
+export interface EquityChangeRow {
+  row_no: number;
+  name: string;
+  paid_in_capital: number;
+  capital_reserve: number;
+  surplus_reserve: number;
+  undistributed_profit: number;
+  total: number;
+  is_header?: boolean;
+  is_total?: boolean;
+  bold?: boolean;
+  indent_level?: number;
+}
+
+export interface EquityChangeStatement {
+  company_name: string;
+  period: string;
+  rows: EquityChangeRow[];
+}
+
+/* ---- 应交税费明细表 ---- */
+export interface TaxPayableDetailRow {
+  tax_code: string;
+  tax_name: string;
+  opening_balance: number;
+  current_debit: number;
+  current_credit: number;
+  ending_balance: number;
+}
+
+export interface TaxPayableDetail {
+  company_name: string;
+  period: string;
+  rows: TaxPayableDetailRow[];
+}
+
+/* ---- 费用明细汇总表 ---- */
+export interface ExpenseSummaryRow {
+  subject_code: string;
+  subject_name: string;
+  period_amount: number;
+  year_amount: number;
+}
+
+export interface ExpenseSummary {
+  company_name: string;
+  period: string;
+  rows: ExpenseSummaryRow[];
+}
+
+/* ---- 应收账款/应付账款账龄分析 ---- */
+export interface AgingRow {
+  subject_code: string;
+  subject_name: string;
+  voucher_date: string;
+  voucher_word: string;
+  voucher_no: number;
+  summary: string;
+  amount: number;
+  days_outstanding: number;
+  aging_bucket: string;
+}
+
+export interface AgingAnalysis {
+  company_name: string;
+  period: string;
+  type: 'receivable' | 'payable';
+  rows: AgingRow[];
+  summary: {
+    within_30: number;
+    within_90: number;
+    within_180: number;
+    within_365: number;
+    over_365: number;
+    total: number;
+  };
+}
+
+/* ---- 固定资产折旧汇总表 ---- */
+export interface DepreciationSummaryRow {
+  asset_code: string;
+  asset_name: string;
+  category: string;
+  original_value: number;
+  monthly_depreciation: number;
+  accumulated_depreciation: number;
+  net_value: number;
+  current_period_depreciation: number;
+}
+
+export interface DepreciationSummary {
+  company_name: string;
+  period: string;
+  rows: DepreciationSummaryRow[];
+  totals: {
+    original_value: number;
+    monthly_depreciation: number;
+    accumulated_depreciation: number;
+    net_value: number;
+    current_period_depreciation: number;
+  };
+}
+
 /* ---- 固定资产 ---- */
 export interface AssetCard {
   id: number;
@@ -530,6 +658,7 @@ export interface FinanceApi {
   createUser(payload: UserPayload): Promise<SysUser>;
   updateUser(id: number, data: { alias?: string; role?: UserRole; enabled?: number }): Promise<SysUser>;
   changePassword(oldPassword: string, newPassword: string): Promise<boolean>;
+  resetUserPassword(userId: number, newPassword: string): Promise<boolean>;
   getUserProfile(): Promise<{ userId: number; username: string; alias: string; role: UserRole } | null>;
 
   listSubjects(): Promise<FinanceSubject[]>;
@@ -573,6 +702,12 @@ export interface FinanceApi {
   getProfitStatement(period: string): Promise<ProfitStatement>;
   getBalanceSheet(period: string): Promise<BalanceSheet>;
   getCashFlowStatement(period: string): Promise<CashFlowStatement>;
+  getEquityChangeStatement(period: string): Promise<EquityChangeStatement>;
+  getTaxPayableDetail(period: string): Promise<TaxPayableDetail>;
+  getExpenseSummary(period: string): Promise<ExpenseSummary>;
+  getReceivableAging(period: string): Promise<AgingAnalysis>;
+  getPayableAging(period: string): Promise<AgingAnalysis>;
+  getDepreciationSummary(period: string): Promise<DepreciationSummary>;
   checkYearEndIntegrity(currentPeriod?: string): Promise<YearEndIntegrityCheck>;
 
   /* 辅助核算类别 */
@@ -601,6 +736,7 @@ export interface FinanceApi {
   /* 辅助核算报表 */
   getAuxProjectBalance(filter?: { auxTypeId?: number; auxValueId?: number; period?: string }): Promise<AuxProjectBalanceRow[]>;
   getAuxProjectDetail(filter?: { auxTypeId?: number; auxValueId?: number; period?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number }): Promise<{ rows: AuxProjectDetailRow[]; total: number }>;
+  getAuxProjectCombo(filter?: { period?: string; auxTypeId?: number }): Promise<AuxProjectCombo>;
 
   /* 凭证字管理 */
   listVoucherWords(): Promise<VoucherWordType[]>;

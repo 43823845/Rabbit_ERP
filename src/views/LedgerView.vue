@@ -6,6 +6,8 @@ import { getFinanceApi } from '../api';
 import type { SubjectBalance, FinanceSubject, MultiColumnLedgerResult, MultiColumnLedgerRow,
   QuantityDetailLedgerRow, QuantityGeneralLedgerRow,
   AuxProjectBalanceRow, AuxProjectDetailRow, AuxProjectType, AuxProjectValue,
+  AuxProjectCombo,
+  TrialBalance,
   DetailLedgerResult } from '../api';
 import { buildTreeOrderedSubjects } from '../utils/subjects';
 
@@ -36,6 +38,7 @@ const bookIcons: Record<string, string> = {
   detail:       `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>`,
   general:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
   balance:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>`,
+  trialBalance: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>`,
   multiColumn:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>`,
   qtyDetail:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><circle cx="16" cy="16" r="2"/></svg>`,
   qtyGeneral:   `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><circle cx="16" cy="12" r="2"/></svg>`,
@@ -51,6 +54,7 @@ const bookGroups: Record<BookCategory, { title: string; items: BookItem[] }> = {
       { key: 'detail',       label: '明细账' },
       { key: 'general',      label: '总账' },
       { key: 'balance',      label: '科目余额表' },
+      { key: 'trialBalance', label: '试算平衡表' },
       { key: 'multiColumn',  label: '多栏账' },
     ],
   },
@@ -134,6 +138,26 @@ const balanceSummary = computed(() => {
   });
   return { openingDebit, openingCredit, debitAmt, creditAmt, endingDebit, endingCredit };
 });
+
+/* ========== 试算平衡表 ========== */
+const tbData = ref<TrialBalance | null>(null);
+const tbLoading = ref(false);
+
+const tbBalanced = computed(() => {
+  const t = tbData.value?.totals;
+  if (!t) return false;
+  const eps = 0.005;
+  return Math.abs(t.openingDebit - t.openingCredit) < eps
+    && Math.abs(t.amountDebit - t.amountCredit) < eps
+    && Math.abs(t.endingDebit - t.endingCredit) < eps;
+});
+
+async function queryTrialBalance() {
+  tbLoading.value = true;
+  try {
+    tbData.value = await api.getTrialBalance(period.value);
+  } finally { tbLoading.value = false; }
+}
 
 /* ========== 多栏账 ========== */
 interface MultiColumnChild {
@@ -438,6 +462,25 @@ async function queryProjectDetail(resetPage = true) {
     pdRows.value = result.rows;
     pdTotal.value = result.total;
   } finally { pdLoading.value = false; }
+}
+
+/* ========== 核算项目组合表 ========== */
+const pcTypeId = ref<number | null>(null);
+const pcAuxTypes = ref<AuxProjectType[]>([]);
+const pcData = ref<AuxProjectCombo | null>(null);
+const pcLoading = ref(false);
+
+async function loadPcAuxTypes() {
+  try { pcAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pcAuxTypes.value = []; }
+}
+async function queryProjectCombo() {
+  pcLoading.value = true;
+  try {
+    pcData.value = await api.getAuxProjectCombo({
+      period: period.value,
+      auxTypeId: pcTypeId.value || undefined,
+    });
+  } finally { pcLoading.value = false; }
 }
 
 /* ========== 总账 ========== */
@@ -756,6 +799,22 @@ function exportCurrentBook() {
     return;
   }
 
+  // 核算项目组合表
+  if (bookKey === 'projectCombo' && pcData.value && pcData.value.rows.length > 0) {
+    const d = pcData.value;
+    const headers = ['科目编码', '科目名称', ...d.columns.flatMap(c => [`${c.value_code} ${c.value_name}(借)`, `${c.value_code} ${c.value_name}(贷)`])];
+    const csvRows = d.rows.map(r => {
+      const row: Record<string, string | number> = { '科目编码': r.subject_code, '科目名称': r.subject_name };
+      d.columns.forEach((c, i) => {
+        row[`${c.value_code} ${c.value_name}(借)`] = r.cells[i].debit || 0;
+        row[`${c.value_code} ${c.value_name}(贷)`] = r.cells[i].credit || 0;
+      });
+      return row;
+    });
+    downloadCsv(headers, csvRows, `核算项目组合表_${ts}.csv`);
+    return;
+  }
+
   ElMessage.warning('当前表格无数据可导出');
 }
 
@@ -771,6 +830,8 @@ function selectBook(key: string) {
   if (key === 'qtyGeneral') { qgSubjectCode.value = ''; queryQtyGeneral(); }
   if (key === 'projectBalance') loadAuxTypes();
   if (key === 'projectDetail') loadPdAuxTypes();
+  if (key === 'trialBalance') queryTrialBalance();
+  if (key === 'projectCombo') { pcData.value = null; loadPcAuxTypes(); }
 }
 
 /* 选择科目查询明细账 */
@@ -966,6 +1027,8 @@ watch(activeBook, (val) => {
   if (val === 'qtyGeneral') queryQtyGeneral();
   if (val === 'projectBalance') loadAuxTypes();
   if (val === 'projectDetail') loadPdAuxTypes();
+  if (val === 'trialBalance') queryTrialBalance();
+  if (val === 'projectCombo') { pcData.value = null; loadPcAuxTypes(); }
 });
 
 /* ---- 打印 ---- */
@@ -1048,6 +1111,37 @@ function handleExportBalance() {
   ]);
   exportCSV(headers, rows, '科目余额表');
   ElMessage.success('科目余额表导出成功');
+}
+
+/* ---- 试算平衡表导出 ---- */
+function handleExportTrialBalance() {
+  if (!tbData.value || tbData.value.rows.length === 0) {
+    ElMessage.warning('暂无数据可导出');
+    return;
+  }
+  const headers = ['科目编码', '科目名称', '期初余额(借)', '期初余额(贷)', '本期借方', '本期贷方', '期末余额(借)', '期末余额(贷)'];
+  const rows = tbData.value.rows.map(r => [
+    r.code,
+    r.name,
+    r.openingDebit > 0 ? r.openingDebit.toFixed(2) : '',
+    r.openingCredit > 0 ? r.openingCredit.toFixed(2) : '',
+    r.debitAmount > 0 ? r.debitAmount.toFixed(2) : '',
+    r.creditAmount > 0 ? r.creditAmount.toFixed(2) : '',
+    r.endingDebit > 0 ? r.endingDebit.toFixed(2) : '',
+    r.endingCredit > 0 ? r.endingCredit.toFixed(2) : '',
+  ]);
+  // 添加合计行
+  rows.push([
+    '合计', '',
+    tbData.value.totals.openingDebit.toFixed(2),
+    tbData.value.totals.openingCredit.toFixed(2),
+    tbData.value.totals.amountDebit.toFixed(2),
+    tbData.value.totals.amountCredit.toFixed(2),
+    tbData.value.totals.endingDebit.toFixed(2),
+    tbData.value.totals.endingCredit.toFixed(2),
+  ]);
+  exportCSV(headers, rows, '试算平衡表');
+  ElMessage.success('试算平衡表导出成功');
 }
 </script>
 
@@ -1281,6 +1375,71 @@ function handleExportBalance() {
               | 借方发生额 {{ balanceSummary.debitAmt.toFixed(2) }}
               | 贷方发生额 {{ balanceSummary.creditAmt.toFixed(2) }}
               | 期末 {{ balanceSummary.endingDebit.toFixed(2) }}
+            </div>
+          </div>
+        </template>
+
+        <!-- ==================== 试算平衡表 ==================== -->
+        <template v-if="activeBook === 'trialBalance'">
+          <div class="query-bar">
+            <div class="query-left">
+              <el-select v-model="period" size="small" style="width:110px">
+                <el-option v-for="p in [period]" :key="p" :label="p" :value="p" />
+              </el-select>
+            </div>
+            <div class="query-right">
+              <el-button type="primary" size="small" @click="queryTrialBalance">查询</el-button>
+              <el-button size="small" @click="handleExportTrialBalance">导出</el-button>
+              <el-button size="small" @click="handlePrint">打印</el-button>
+            </div>
+          </div>
+
+          <div class="data-panel" v-loading="tbLoading">
+            <el-table v-if="tbData" :data="tbData.rows" border stripe size="small" max-height="480">
+              <el-table-column prop="code" label="科目编码" min-width="95" align="center" />
+              <el-table-column prop="name" label="科目名称" min-width="150" show-overflow-tooltip />
+              <el-table-column label="期初余额(借)" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.openingDebit > 0" class="money">{{ row.openingDebit.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="期初余额(贷)" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.openingCredit > 0" class="money">{{ row.openingCredit.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="本期借方" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.debitAmount > 0" class="money">{{ row.debitAmount.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="本期贷方" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.creditAmount > 0" class="money">{{ row.creditAmount.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="期末余额(借)" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.endingDebit > 0" class="money">{{ row.endingDebit.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="期末余额(贷)" align="center" min-width="105">
+                <template #default="{ row }">
+                  <span v-if="row.endingCredit > 0" class="money">{{ row.endingCredit.toFixed(2) }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-else-if="!tbLoading" class="mc-empty"><p>点击「查询」按钮加载试算平衡表</p></div>
+
+            <!-- 合计行 -->
+            <div v-if="tbData" class="summary-bar">
+              合计：
+              期初 {{ tbData.totals.openingDebit.toFixed(2) }}（借） / {{ tbData.totals.openingCredit.toFixed(2) }}（贷）
+              | 本期 {{ tbData.totals.amountDebit.toFixed(2) }}（借） / {{ tbData.totals.amountCredit.toFixed(2) }}（贷）
+              | 期末 {{ tbData.totals.endingDebit.toFixed(2) }}（借） / {{ tbData.totals.endingCredit.toFixed(2) }}（贷）
+              <span :class="tbBalanced ? 'tb-balanced' : 'tb-unbalanced'" style="margin-left:8px">
+                {{ tbBalanced ? '✓ 试算平衡' : '✗ 试算不平衡' }}
+              </span>
             </div>
           </div>
         </template>
@@ -1575,8 +1734,60 @@ function handleExportBalance() {
           </div>
         </template>
 
+        <!-- ==================== 核算项目组合表 ==================== -->
+        <template v-if="activeBook === 'projectCombo'">
+          <div class="data-panel" v-loading="pcLoading">
+            <div class="query-bar">
+              <span class="query-label">期间</span>
+              <el-select v-model="period" size="small" style="width:110px">
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
+              </el-select>
+              <span class="query-label" style="margin-left:12px">核算类别</span>
+              <el-select v-model="pcTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="queryProjectCombo">
+                <el-option v-for="t in pcAuxTypes" :key="t.id" :label="t.name" :value="t.id" />
+              </el-select>
+              <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectCombo">查询</el-button>
+              <el-button size="small" @click="exportCurrentBook" :disabled="!pcData || pcLoading">导出</el-button>
+            </div>
+
+            <div v-if="pcData && pcData.columns.length > 0 && pcData.rows.length > 0" class="mc-table-wrap">
+              <el-table :data="pcData.rows" border stripe size="small" :max-height="450">
+                <el-table-column prop="subject_code" label="科目编码" min-width="90" fixed />
+                <el-table-column prop="subject_name" label="科目名称" min-width="120" show-overflow-tooltip fixed />
+                <template v-for="(col, ci) in pcData.columns" :key="col.value_id">
+                  <el-table-column :label="col.value_code + ' ' + col.value_name + '(借)'" align="center" min-width="105">
+                    <template #default="{ row }">
+                      <span v-if="row.cells[ci].debit > 0" class="money">{{ row.cells[ci].debit.toFixed(2) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="col.value_code + ' ' + col.value_name + '(贷)'" align="center" min-width="105">
+                    <template #default="{ row }">
+                      <span v-if="row.cells[ci].credit > 0" class="money">{{ row.cells[ci].credit.toFixed(2) }}</span>
+                    </template>
+                  </el-table-column>
+                </template>
+              </el-table>
+
+              <!-- 合计行 -->
+              <div v-if="pcData.totals && pcData.totals.length > 0" class="summary-bar" style="margin-top:8px">
+                合计：
+                <template v-for="(t, ti) in pcData.totals" :key="ti">
+                  <template v-if="ti > 0"> | </template>
+                  {{ pcData.columns[ti].value_name }} 借:{{ t.debit.toFixed(2) }} 贷:{{ t.credit.toFixed(2) }}
+                </template>
+              </div>
+            </div>
+            <div v-else-if="pcData && pcData.columns.length === 0 && !pcLoading" class="mc-empty">
+              <p>未找到核算项目数据</p>
+            </div>
+            <div v-else-if="!pcData || pcData.rows.length === 0" class="mc-placeholder">
+              <p>选择核算类别后查询，或确认凭证中已关联辅助核算项目</p>
+            </div>
+          </div>
+        </template>
+
         <!-- ==================== 其他账簿占位 ==================== -->
-        <template v-if="activeBook !== 'detail' && activeBook !== 'balance' && activeBook !== 'general' && activeBook !== 'multiColumn' && activeBook !== 'qtyDetail' && activeBook !== 'qtyGeneral' && activeBook !== 'projectBalance' && activeBook !== 'projectDetail'">
+        <template v-if="activeBook !== 'detail' && activeBook !== 'balance' && activeBook !== 'general' && activeBook !== 'multiColumn' && activeBook !== 'qtyDetail' && activeBook !== 'qtyGeneral' && activeBook !== 'projectBalance' && activeBook !== 'projectDetail' && activeBook !== 'projectCombo' && activeBook !== 'trialBalance'">
           <div class="data-panel" v-loading="loading">
             <div class="placeholder">
               <svg viewBox="0 0 24 24" fill="none" width="40" height="40"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 9h18M9 3v18" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -1853,6 +2064,16 @@ function handleExportBalance() {
 
 /* ---- 表格内 el-tag 尺寸统一 ---- */
 :deep(.el-tag--small) { font-size: 11px; }
+
+/* ---- 试算平衡状态 ---- */
+.tb-balanced {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  background: #e8f4fd; color: #1a6eb5; font-size: 12px; font-weight: 600;
+}
+.tb-unbalanced {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  background: #fde8ec; color: #b5435a; font-size: 12px; font-weight: 600;
+}
 
 /* ---- 打印样式 ---- */
 @media print {

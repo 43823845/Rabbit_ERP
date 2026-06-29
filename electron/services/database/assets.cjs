@@ -190,6 +190,65 @@ function applyAssetMethods(FinanceDatabase) {
     const rows = this.db.prepare('SELECT COALESCE(SUM(original_value),0) AS totalOriginal, COALESCE(SUM(accumulated_depreciation),0) AS totalDep, COALESCE(SUM(net_value),0) AS totalNet, COUNT(*) AS cnt FROM fa_asset_card WHERE book_id = ?').get(this.currentBookId);
     return rows || { totalOriginal: 0, totalDep: 0, totalNet: 0, cnt: 0 };
   };
+
+  /** 固定资产折旧汇总表 */
+  proto.getDepreciationSummary = function (period) {
+    this._ensureBookId();
+
+    const book = this.db.prepare('SELECT name AS company_name FROM acct_book WHERE id = ?').get(this.currentBookId);
+    const cp = period || '2026-06';
+
+    // 获取所有非报废/已处置的固定资产
+    const cards = this.db.prepare(
+      "SELECT * FROM fa_asset_card WHERE book_id = ? AND status NOT IN ('报废','已处置') ORDER BY category, asset_code"
+    ).all(this.currentBookId);
+
+    let totalOriginal = 0, totalMonthlyDep = 0, totalAccDep = 0, totalNetVal = 0, totalCurrentDep = 0;
+
+    const rows = cards.map(card => {
+      totalOriginal += card.original_value || 0;
+      totalMonthlyDep += card.monthly_depreciation || 0;
+      totalAccDep += card.accumulated_depreciation || 0;
+      totalNetVal += card.net_value || 0;
+
+      // 当期折旧：精确匹配 depreciateAsset 生成的凭证（remark = '计提折旧：<资产名称>'）
+      let currentDep = 0;
+      const depEntry = this.db.prepare(`
+        SELECT SUM(e.credit) as dep_amount
+        FROM gl_voucher_entry e
+        JOIN gl_voucher v ON v.id = e.voucher_id
+        WHERE v.book_id = ? AND v.status = 'posted' AND v.period = ?
+          AND e.subject_code = '1602'
+          AND v.remark = '计提折旧：' || ?
+      `).get(this.currentBookId, cp, card.asset_name);
+      currentDep = depEntry?.dep_amount || 0;
+      totalCurrentDep += currentDep;
+
+      return {
+        asset_code: card.asset_code || '',
+        asset_name: card.asset_name || '',
+        category: card.category || '',
+        original_value: Math.round((card.original_value || 0) * 100) / 100,
+        monthly_depreciation: Math.round((card.monthly_depreciation || 0) * 100) / 100,
+        accumulated_depreciation: Math.round((card.accumulated_depreciation || 0) * 100) / 100,
+        net_value: Math.round((card.net_value || 0) * 100) / 100,
+        current_period_depreciation: Math.round(currentDep * 100) / 100,
+      };
+    });
+
+    return {
+      company_name: book?.company_name || '',
+      period: cp,
+      rows,
+      totals: {
+        original_value: Math.round(totalOriginal * 100) / 100,
+        monthly_depreciation: Math.round(totalMonthlyDep * 100) / 100,
+        accumulated_depreciation: Math.round(totalAccDep * 100) / 100,
+        net_value: Math.round(totalNetVal * 100) / 100,
+        current_period_depreciation: Math.round(totalCurrentDep * 100) / 100,
+      },
+    };
+  };
 }
 
 module.exports = { applyAssetMethods };

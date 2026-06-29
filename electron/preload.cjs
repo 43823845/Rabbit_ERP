@@ -34,7 +34,7 @@ const channels = [
   /* 附件 */
   'listAttachments', 'uploadAttachment', 'deleteAttachment', 'getAttachmentPath', 'readAttachmentFile',
   /* 用户 */
-  'listUsers', 'createUser', 'updateUser', 'changePassword', 'getUserProfile',
+  'listUsers', 'createUser', 'updateUser', 'changePassword', 'resetPassword', 'getUserProfile',
   'renumberSubjects', 'reorderAllVoucherNos',
   'deleteCompany',
   /* 辅助核算 */
@@ -44,7 +44,7 @@ const channels = [
   'getQuantityDetailLedger', 'getQuantityGeneralLedger',
   'listMultiColumnSchemes', 'createMultiColumnScheme', 'updateMultiColumnScheme', 'deleteMultiColumnScheme',
   'getMultiColumnLedger',
-  'getAuxProjectBalance', 'getAuxProjectDetail',
+  'getAuxProjectBalance', 'getAuxProjectDetail', 'getAuxProjectCombo',
   /* 凭证字 */
   'listVoucherWords', 'createVoucherWord', 'updateVoucherWord', 'deleteVoucherWord',
   /* 数据管理 */
@@ -52,8 +52,12 @@ const channels = [
   /* 固定资产 */
   'listAssetCards', 'getAssetCard', 'createAssetCard', 'updateAssetCard', 'deleteAssetCard',
   'depreciateAsset', 'getAssetStats',
-  /* 现金流量表 & 年末结转 */
+  /* 现金流量表 & 年末结转 & 新增报表 */
   'getCashFlowStatement', 'checkYearEndIntegrity',
+  'getEquityChangeStatement', 'getTaxPayableDetail', 'getExpenseSummary',
+  'getReceivableAging', 'getPayableAging',
+  /* 固定资产汇总 */
+  'getDepreciationSummary',
   /* 批量操作 */
   'batchAuditVouchers', 'batchPostVouchers',
   /* 操作日志 */

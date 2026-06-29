@@ -96,6 +96,19 @@ function applyUserMethods(FinanceDatabase) {
   };
 
   /**
+   * 管理员重置用户密码（无需旧密码）
+   */
+  proto.resetPassword = function ({ id, newPassword }) {
+    if (!newPassword || newPassword.length < 4) throw new Error('密码至少4位');
+    const user = this.db.prepare('SELECT * FROM sys_user WHERE id = ?').get(id);
+    if (!user) throw new Error('用户不存在');
+    const newHash = hashPassword(newPassword, config.passwordSalt);
+    this.db.prepare('UPDATE sys_user SET password_hash = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?').run(newHash, id);
+    this._log('reset_password', `管理员重置用户 ${user.username} 密码`);
+    return true;
+  };
+
+  /**
    * 获取用户简要信息
    */
   proto.getUserProfile = function (userId) {

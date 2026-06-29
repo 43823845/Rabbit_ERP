@@ -66,6 +66,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 | `finance:getTrialBalance` | Renderer→Main | 试算平衡表 |
 | `finance:getProfitStatement` | Renderer→Main | 利润表 |
 | `finance:getBalanceSheet` | Renderer→Main | 资产负债表 |
+| `finance:getEquityChangeStatement` | Renderer→Main | 所有者权益变动表 |
+| `finance:getTaxDetail` | Renderer→Main | 应交税费明细表 |
+| `finance:getExpenseSummary` | Renderer→Main | 费用明细汇总表 |
+| `finance:getDepreciationSummary` | Renderer→Main | 固定资产折旧汇总表 |
+| `finance:getReceivableAging` | Renderer→Main | 应收账款账龄分析 |
+| `finance:getPayableAging` | Renderer→Main | 应付账款账龄分析 |
+| `finance:getAuxProjectCombo` | Renderer→Main | 核算项目组合表 |
 
 ---
 
@@ -190,7 +197,59 @@ ClosingView.vue → closePeriod(period)
                 ├── getTemplatesByType('balance') 获取模板行
                 └── 跨报表引用：净利润 = getProfitStatement() row_no=32
 
-### 4.6 固定资产折旧流程
+### 4.6 财务报表生成流程 (ReportsView)
+
+```
+财务报表 (ReportsView)
+    │
+    ├── 所有者权益变动表
+    │   └── getEquityChangeStatement(period)
+    │       └── shared/report-templates.cjs (equity_change 模板)
+    │           └── 实收资本 → 资本公积 → 盈余公积 → 未分配利润 → 本年利润
+    │
+    ├── 应交税费明细表
+    │   └── getTaxDetail(period)
+    │       └── shared/report-templates.cjs (tax_detail 模板)
+    │           └── 增值税 → 企业所得税 → 城建税 → 教育费附加 → ...
+    │
+    ├── 费用明细汇总表
+    │   └── getExpenseSummary(period)
+    │       └── 按费用科目(管理费用/销售费用/财务费用)汇总子科目
+    │           └── 包含本期金额 + 本年累计 + 预算比较
+    │
+    ├── 固定资产折旧汇总表
+    │   └── getDepreciationSummary(period)
+    │       └── SQL: fa_asset_card JOIN gl_voucher (折旧凭证)
+    │           └── 按资产名称分组，汇总原值/残值/累计折旧/本期折旧/净值
+    │
+    ├── 应收账款账龄分析
+    │   └── getReceivableAging(period)
+    │       └── 按客户 + 应收账款(1122)分录汇总
+    │           └── 按凭证日期计算逾期天数 → 1-30/31-60/61-90/90+天分桶
+    │
+    └── 应付账款账龄分析
+        └── getPayableAging(period)
+            └── 按供应商 + 应付账款(2202)分录汇总
+                └── 按凭证日期计算逾期天数 → 1-30/31-60/61-90/90+天分桶
+```
+
+### 4.7 核算项目组合表流程 (LedgerView)
+
+```
+核算项目组合表
+    │
+    └── getAuxProjectCombo({ period, auxTypeId })
+        └── SQL: gl_voucher_entry JOIN aux_project_value
+            WHERE aux_type_id = ? AND voucher.status = 'posted'
+            GROUP BY (aux_value_id, subject_code)
+            │
+            ├── 构建 columns[] — 从 aux_project_value 获取辅助核算项目值
+            ├── 构建 rows[] — 按科目(subject_code)分组
+            │   └── 每行 cells[] — [{debit, credit}] 对应每列
+            └── 构建 totals[] — 每列借方/贷方合计
+```
+
+### 4.8 固定资产折旧流程
 
 ```
 AssetView.vue → depreciateAsset(id)

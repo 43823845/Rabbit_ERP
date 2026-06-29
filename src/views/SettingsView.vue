@@ -4,13 +4,13 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   User, OfficeBuilding, Calendar, Setting, Plus, Edit,
-  Lock, Tickets, FolderOpened, Download, RefreshRight, Coin,
-  View, Clock,
+  Tickets, FolderOpened, Download, RefreshRight, Coin,
+  View, Clock, Collection,
 } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import { useAuth } from '../auth';
 import ClosingView from './ClosingView.vue';
-import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo, OpLogEntry } from '../api';
+import type { Company, SysUser, UserRole, VoucherWordType, VoucherWordPayload, DatabaseInfo, OpLogEntry, AuxProjectType, AuxProjectValue } from '../api';
 
 const api = getFinanceApi();
 const auth = useAuth();
@@ -18,7 +18,7 @@ const auth = useAuth();
 /* ---- 状态 ---- */
 const loading = ref(false);
 /** 当前激活的设置菜单项 */
-const activeMenu = ref('company');
+const activeMenu = ref('accounts');
 
 /** 导航菜单定义 */
 interface NavItem { key: string; label: string; icon: typeof OfficeBuilding; adminOnly?: boolean }
@@ -27,9 +27,9 @@ const navGroups: NavGroup[] = [
   {
     label: '账套设置',
     items: [
-      { key: 'company', label: '基础信息', icon: OfficeBuilding },
       { key: 'accounts', label: '账套管理', icon: Tickets },
       { key: 'voucherWords', label: '凭证字', icon: Edit },
+      { key: 'auxProjects', label: '辅助核算', icon: Collection },
       { key: 'periods', label: '期间管理', icon: Calendar },
     ],
   },
@@ -76,86 +76,85 @@ onMounted(async () => {
   } finally { loading.value = false; }
 });
 
-/* ---- 公司信息编辑（使用 reactive 确保 v-model 正常） ---- */
-const editingCompany = ref(false);
-const companyForm = reactive({ contactPerson: '', legalRepresentative: '', phone: '', address: '', taxNo: '' });
-const savingCompany = ref(false);
-
-function startEditCompany() {
-  if (!company.value) return;
-  companyForm.contactPerson = company.value.contactPerson || '';
-  companyForm.legalRepresentative = company.value.legalRepresentative || '';
-  companyForm.phone = company.value.phone || '';
-  companyForm.address = company.value.address || '';
-  companyForm.taxNo = company.value.taxNo || '';
-  editingCompany.value = true;
-}
-function cancelEditCompany() { editingCompany.value = false; }
-
-async function saveCompany() {
-  if (!company.value) return;
-
-  // 基础格式校验
-  if (companyForm.phone && !/^[\d\-\s()+]*$/.test(companyForm.phone)) {
-    ElMessage.warning('联系电话只能包含数字、短横线和空格'); return;
-  }
-  if (companyForm.taxNo && companyForm.taxNo.length > 0 && companyForm.taxNo.length !== 18) {
-    ElMessage.warning('纳税人识别号应为18位（统一社会信用代码）'); return;
-  }
-
-  savingCompany.value = true;
-  try {
-    const updated = await api.updateCompany(company.value.id, { ...companyForm });
-    company.value = updated;
-    editingCompany.value = false;
-    ElMessage.success('公司信息已更新');
-  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '保存失败'); }
-  finally { savingCompany.value = false; }
-}
-
 /* ---- 账套管理 ---- */
-const editingAccountId = ref<string | null>(null);
-const editingAccountName = ref('');
-/** 删除确认：需要输入账套名称 */
+/** 删除确认：需要输入账套名称 + 管理密码授权 */
 const deleteConfirmOpen = ref(false);
 const deleteTarget = ref<Company | null>(null);
 const deleteConfirmInput = ref('');
+const deleteAuthPassword = ref('');
+const deleting = ref(false);
+
+/** 编辑账套弹窗 */
+const editCompanyDialogOpen = ref(false);
+const editCompanyTarget = ref<Company | null>(null);
+const editCompanyForm = reactive({ name: '', contactPerson: '', legalRepresentative: '', phone: '', address: '', taxNo: '' });
+const savingEditCompany = ref(false);
 
 function notifyCompanyChanged() {
   window.dispatchEvent(new CustomEvent('company-changed'));
 }
 
+function openEditCompany(c: Company) {
+  editCompanyTarget.value = c;
+  editCompanyForm.name = c.name || '';
+  editCompanyForm.contactPerson = c.contactPerson || '';
+  editCompanyForm.legalRepresentative = c.legalRepresentative || '';
+  editCompanyForm.phone = c.phone || '';
+  editCompanyForm.address = c.address || '';
+  editCompanyForm.taxNo = c.taxNo || '';
+  editCompanyDialogOpen.value = true;
+}
+
+async function handleSaveEditCompany() {
+  const c = editCompanyTarget.value;
+  if (!c) return;
+  if (!editCompanyForm.name.trim()) {
+    ElMessage.warning('账套名称不能为空'); return;
+  }
+  if (editCompanyForm.phone && !/^[\d\-\s()+]*$/.test(editCompanyForm.phone)) {
+    ElMessage.warning('联系电话只能包含数字、短横线和空格'); return;
+  }
+  if (editCompanyForm.taxNo && editCompanyForm.taxNo.length > 0 && editCompanyForm.taxNo.length !== 18) {
+    ElMessage.warning('纳税人识别号应为18位（统一社会信用代码）'); return;
+  }
+
+  savingEditCompany.value = true;
+  try {
+    const updated = await api.updateCompany(c.id, { ...editCompanyForm });
+    const idx = companies.value.findIndex(x => x.id === c.id);
+    if (idx >= 0) companies.value[idx] = updated;
+    if (company.value?.id === c.id) company.value = updated;
+    editCompanyDialogOpen.value = false;
+    ElMessage.success('账套信息已更新');
+    notifyCompanyChanged();
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '保存失败'); }
+  finally { savingEditCompany.value = false; }
+}
+
 async function handleCreateCompany() {
   try {
-    const name = prompt('请输入新账套名称：');
-    if (!name || !name.trim()) return;
+    const { value: name, action } = await ElMessageBox.prompt('请输入新账套名称：', '新增账套', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
+      inputErrorMessage: '账套名称不能为空',
+    });
+    if (action !== 'confirm' || !name || !name.trim()) return;
     const c = await api.createCompany(name.trim());
     companies.value.push(c);
     ElMessage.success(`账套「${c.name}」已创建`);
     notifyCompanyChanged();
-  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '创建失败'); }
+  } catch (e: unknown) {
+    if (e === 'cancel' || (e as any)?.action === 'cancel') return;
+    ElMessage.error((e as Error)?.message || '创建失败');
+  }
 }
 
-function startRenameAccount(c: Company) {
-  editingAccountId.value = c.id;
-  editingAccountName.value = c.name;
-}
-function cancelRenameAccount() { editingAccountId.value = null; }
-async function saveRenameAccount(c: Company) {
-  try {
-    await api.updateCompany(c.id, { name: editingAccountName.value });
-    const target = companies.value.find(x => x.id === c.id);
-    if (target) target.name = editingAccountName.value;
-    if (company.value?.id === c.id) company.value.name = editingAccountName.value;
-    editingAccountId.value = null;
-    ElMessage.success('账套已重命名');
-    notifyCompanyChanged();
-  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '重命名失败'); }
-}
 
 function openDeleteConfirm(c: Company) {
   deleteTarget.value = c;
   deleteConfirmInput.value = '';
+  deleteAuthPassword.value = '';
   deleteConfirmOpen.value = true;
 }
 
@@ -164,13 +163,23 @@ async function confirmDeleteCompany() {
   if (deleteConfirmInput.value !== deleteTarget.value.name) {
     ElMessage.warning('输入的账套名称不一致'); return;
   }
+  if (!deleteAuthPassword.value) {
+    ElMessage.warning('请输入管理员密码进行授权'); return;
+  }
+  deleting.value = true;
   try {
+    // 验证管理员密码
+    const loginResult = await api.login(currentUser.value?.username || '', deleteAuthPassword.value);
+    if (!loginResult || loginResult.role !== 'admin') {
+      ElMessage.error('管理员密码验证失败'); deleting.value = false; return;
+    }
     await api.deleteCompany(deleteTarget.value.id);
     companies.value = companies.value.filter(x => x.id !== deleteTarget.value!.id);
     ElMessage.success('账套已删除');
     deleteConfirmOpen.value = false;
     notifyCompanyChanged();
   } catch (e: unknown) { ElMessage.error((e as Error)?.message || '删除失败'); }
+  finally { deleting.value = false; }
 }
 
 /* ---- 用户管理 ---- */
@@ -227,27 +236,38 @@ async function handleToggleUser(u: SysUser) {
   } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
 }
 
-/* ---- 修改密码 ---- */
+/* ---- 重置密码（管理员） ---- */
 const pwdDialogOpen = ref(false);
-const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' });
+const pwdTargetUser = ref<SysUser | null>(null);
+const pwdForm = reactive({ newPassword: '', confirmPassword: '' });
 const savingPwd = ref(false);
 
-async function changePassword() {
-  if (!pwdForm.oldPassword || !pwdForm.newPassword) {
-    ElMessage.warning('请填写完整密码信息'); return;
+function openResetPassword(u: SysUser) {
+  pwdTargetUser.value = u;
+  pwdForm.newPassword = '';
+  pwdForm.confirmPassword = '';
+  pwdDialogOpen.value = true;
+}
+
+async function resetPassword() {
+  if (!pwdForm.newPassword) {
+    ElMessage.warning('请输入新密码'); return;
+  }
+  if (pwdForm.newPassword.length < 4) {
+    ElMessage.warning('密码至少4位'); return;
   }
   if (pwdForm.newPassword !== pwdForm.confirmPassword) {
     ElMessage.warning('两次输入的新密码不一致'); return;
   }
+  if (!pwdTargetUser.value) return;
   savingPwd.value = true;
   try {
-    await api.changePassword(pwdForm.oldPassword, pwdForm.newPassword);
-    ElMessage.success('密码已修改，下次登录请使用新密码');
+    await api.resetUserPassword(pwdTargetUser.value.id, pwdForm.newPassword);
+    ElMessage.success(`用户「${pwdTargetUser.value.username}」的密码已重置`);
     pwdDialogOpen.value = false;
-    pwdForm.oldPassword = '';
     pwdForm.newPassword = '';
     pwdForm.confirmPassword = '';
-  } catch (e: any) { ElMessage.error(e?.message || '密码修改失败'); }
+  } catch (e: any) { ElMessage.error(e?.message || '密码重置失败'); }
   finally { savingPwd.value = false; }
 }
 
@@ -311,9 +331,166 @@ async function handleSetDefaultVw(row: VoucherWordType) {
   } catch (e: any) { ElMessage.error(e?.message || '操作失败'); }
 }
 
+async function handleDeleteVw(row: VoucherWordType) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除凭证字「${row.word}」吗？删除后使用该凭证字的凭证将无法通过断号校验。`,
+      '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    );
+  } catch { return; }
+  try {
+    await api.deleteVoucherWord(row.id);
+    ElMessage.success(`凭证字「${row.word}」已删除`);
+    await loadVoucherWords();
+  } catch (e: any) { ElMessage.error(e?.message || '删除失败'); }
+}
+
+/* ---- 辅助核算类别管理 ---- */
+const auxTypes = ref<AuxProjectType[]>([]);
+const auxValues = ref<AuxProjectValue[]>([]);
+const auxTypesLoading = ref(false);
+const selectedAuxType = ref<AuxProjectType | null>(null);
+
+interface AuxTypeDialogState {
+  open: boolean; mode: 'create' | 'edit';
+  id?: number; code: string; name: string;
+}
+const auxTypeDialog = reactive<AuxTypeDialogState>({ open: false, mode: 'create', code: '', name: '' });
+const savingAuxType = ref(false);
+
+interface AuxValueDialogState {
+  open: boolean; mode: 'create' | 'edit';
+  id?: number; code: string; name: string;
+}
+const auxValueDialog = reactive<AuxValueDialogState>({ open: false, mode: 'create', code: '', name: '' });
+const savingAuxValue = ref(false);
+
+async function loadAuxProjectTypes() {
+  auxTypesLoading.value = true;
+  try {
+    auxTypes.value = await api.listAuxProjectTypes();
+    // 保持选中状态：如果之前选中的类型还存在则保留
+    if (selectedAuxType.value) {
+      const found = auxTypes.value.find(t => t.id === selectedAuxType.value!.id);
+      if (found) { selectedAuxType.value = found; await loadAuxValues(found.id); }
+      else { selectedAuxType.value = null; auxValues.value = []; }
+    }
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '加载辅助核算类别失败'); }
+  finally { auxTypesLoading.value = false; }
+}
+
+async function loadAuxValues(typeId: number) {
+  try { auxValues.value = await api.listAuxProjectValues(typeId); }
+  catch (e: unknown) { ElMessage.error((e as Error)?.message || '加载核算项目失败'); }
+}
+
+function selectAuxType(t: AuxProjectType) {
+  selectedAuxType.value = t;
+  loadAuxValues(t.id);
+}
+
+function openCreateAuxType() {
+  Object.assign(auxTypeDialog, { open: true, mode: 'create', id: undefined, code: '', name: '' });
+}
+
+function openEditAuxType(t: AuxProjectType) {
+  Object.assign(auxTypeDialog, { open: true, mode: 'edit', id: t.id, code: t.code, name: t.name });
+}
+
+async function saveAuxType() {
+  if (!auxTypeDialog.code.trim() || !auxTypeDialog.name.trim()) {
+    ElMessage.warning('编码和名称不能为空'); return;
+  }
+  savingAuxType.value = true;
+  try {
+    if (auxTypeDialog.mode === 'create') {
+      await api.createAuxProjectType({ code: auxTypeDialog.code.trim(), name: auxTypeDialog.name.trim() });
+      ElMessage.success('辅助核算类别已创建');
+    } else {
+      await api.updateAuxProjectType({ id: auxTypeDialog.id!, code: auxTypeDialog.code.trim(), name: auxTypeDialog.name.trim() });
+      ElMessage.success('辅助核算类别已更新');
+    }
+    auxTypeDialog.open = false;
+    await loadAuxProjectTypes();
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
+  finally { savingAuxType.value = false; }
+}
+
+async function deleteAuxType(t: AuxProjectType) {
+  try {
+    const { value, action } = await ElMessageBox.prompt(
+      `删除类别将同时删除其下所有核算项目，此操作不可恢复。\n请输入类别名称「${t.name}」以确认：`,
+      '确认删除', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        inputPattern: new RegExp(`^${t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+        inputErrorMessage: `请输入「${t.name}」确认`,
+      },
+    );
+    if (action !== 'confirm' || value !== t.name) return;
+  } catch { return; }
+  try {
+    await api.deleteAuxProjectType(t.id);
+    if (selectedAuxType.value?.id === t.id) { selectedAuxType.value = null; auxValues.value = []; }
+    ElMessage.success('辅助核算类别已删除');
+    await loadAuxProjectTypes();
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '删除失败'); }
+}
+
+function openCreateAuxValue() {
+  Object.assign(auxValueDialog, { open: true, mode: 'create', id: undefined, code: '', name: '' });
+}
+
+function openEditAuxValue(v: AuxProjectValue) {
+  Object.assign(auxValueDialog, { open: true, mode: 'edit', id: v.id, code: v.code, name: v.name });
+}
+
+async function saveAuxValue() {
+  if (!auxValueDialog.code.trim() || !auxValueDialog.name.trim()) {
+    ElMessage.warning('编码和名称不能为空'); return;
+  }
+  if (!selectedAuxType.value) return;
+  savingAuxValue.value = true;
+  try {
+    if (auxValueDialog.mode === 'create') {
+      await api.createAuxProjectValue({ typeId: selectedAuxType.value.id, code: auxValueDialog.code.trim(), name: auxValueDialog.name.trim() });
+      ElMessage.success('核算项目已创建');
+    } else {
+      await api.updateAuxProjectValue({ id: auxValueDialog.id!, code: auxValueDialog.code.trim(), name: auxValueDialog.name.trim() });
+      ElMessage.success('核算项目已更新');
+    }
+    auxValueDialog.open = false;
+    await loadAuxValues(selectedAuxType.value.id);
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '操作失败'); }
+  finally { savingAuxValue.value = false; }
+}
+
+async function deleteAuxValue(v: AuxProjectValue) {
+  try {
+    const { value, action } = await ElMessageBox.prompt(
+      `请输入项目名称「${v.name}」以确认删除：`,
+      '确认删除', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        inputPattern: new RegExp(`^${v.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+        inputErrorMessage: `请输入「${v.name}」确认`,
+      },
+    );
+    if (action !== 'confirm' || value !== v.name) return;
+  } catch { return; }
+  try {
+    await api.deleteAuxProjectValue(v.id);
+    ElMessage.success('核算项目已删除');
+    if (selectedAuxType.value) await loadAuxValues(selectedAuxType.value.id);
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '删除失败'); }
+}
+
 /* 切换菜单时自动加载数据 */
 watch(activeMenu, (key) => {
   if (key === 'voucherWords') loadVoucherWords();
+  if (key === 'auxProjects') loadAuxProjectTypes();
   if (key === 'dataManage') loadDbInfo();
   if (key === 'opLogs') loadOpLogs();
 });
@@ -433,6 +610,17 @@ async function handleExportJson() {
   finally { exporting.value = false; }
 }
 
+async function handleExportAll() {
+  exporting.value = true;
+  try {
+    const res = await api.exportAllData();
+    if (res.canceled) { exporting.value = false; return; }
+    if (res.__error) { ElMessage.error(res.__error); exporting.value = false; return; }
+    ElMessage.success(res.path ? `完整备份已导出至 ${res.path}` : '数据已导出');
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '导出失败'); }
+  finally { exporting.value = false; }
+}
+
 function formatFileSize(bytes: number): string {
   if (!bytes || bytes === 0) return '0 B';
   if (bytes < 1024) return bytes + ' B';
@@ -481,101 +669,18 @@ function formatFileSize(bytes: number): string {
       <!-- 右侧内容区 -->
       <div class="sp-content">
 
-        <!-- ===== 基础信息 ===== -->
-        <div v-if="activeMenu === 'company'" class="sp-basic-grid">
-          <!-- 左：公司信息 -->
-          <div class="sp-basic-card sp-basic-card--company">
-            <div class="sp-bc-header">
-              <div class="sp-bc-header-left">
-                <span class="sp-bc-icon"><el-icon :size="16"><OfficeBuilding /></el-icon></span>
-                <span class="sp-bc-title">公司信息</span>
-              </div>
-              <div class="sp-bc-header-right">
-                <template v-if="!editingCompany">
-                  <el-button size="small" type="primary" plain @click="startEditCompany">
-                    <el-icon><Edit /></el-icon>编辑
-                  </el-button>
-                </template>
-                <template v-else>
-                  <el-button size="small" text @click="cancelEditCompany">取消</el-button>
-                  <el-button size="small" type="primary" :loading="savingCompany" @click="saveCompany">保存</el-button>
-                </template>
-              </div>
-            </div>
-              <div v-if="!editingCompany" class="sp-bc-body">
-              <div class="sp-kv-section"><div class="sp-kv-section-title">基本信息</div>
-                <div class="sp-kv-row"><span class="sp-kv-label">账套名称</span><span class="sp-kv-value sp-kv-value--strong">{{ company?.name || '—' }}</span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">当前期间</span><span class="sp-kv-value"><el-tag size="small" effect="plain" type="primary">{{ company?.period || '—' }}</el-tag></span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">科目数量</span><span class="sp-kv-value">{{ subjectsCount }} 个</span></div>
-              </div>
-              <div class="sp-kv-section"><div class="sp-kv-section-title">联系方式</div>
-                <div class="sp-kv-row"><span class="sp-kv-label">联系人</span><span class="sp-kv-value">{{ company?.contactPerson || '—' }}</span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">企业法人</span><span class="sp-kv-value">{{ company?.legalRepresentative || '—' }}</span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">电话</span><span class="sp-kv-value">{{ company?.phone || '—' }}</span></div>
-              </div>
-              <div class="sp-kv-section"><div class="sp-kv-section-title">其他信息</div>
-                <div class="sp-kv-row"><span class="sp-kv-label">地址</span><span class="sp-kv-value">{{ company?.address || '—' }}</span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">税号</span><span class="sp-kv-value sp-kv-value--mono">{{ company?.taxNo || '—' }}</span></div>
-              </div>
-            </div>
-            <div v-else class="sp-bc-body sp-bc-body--edit">
-              <el-form :model="companyForm" label-position="top" class="sp-company-form">
-                <el-form-item label="账套名称"><el-input :model-value="company?.name" disabled /></el-form-item>
-                <div class="sp-form-row">
-                  <el-form-item label="联系人"><el-input v-model="companyForm.contactPerson" placeholder="联系人姓名" /></el-form-item>
-                  <el-form-item label="企业法人"><el-input v-model="companyForm.legalRepresentative" placeholder="企业法人姓名" /></el-form-item>
-                </div>
-                <el-form-item label="电话"><el-input v-model="companyForm.phone" placeholder="联系电话" /></el-form-item>
-                <el-form-item label="地址"><el-input v-model="companyForm.address" placeholder="公司地址" /></el-form-item>
-                <el-form-item label="税号"><el-input v-model="companyForm.taxNo" placeholder="纳税人识别号（18位）" maxlength="18" /></el-form-item>
-              </el-form>
-            </div>
-          </div>
-          <!-- 右：个人信息 -->
-          <div class="sp-basic-card sp-basic-card--user">
-            <div class="sp-bc-header">
-              <div class="sp-bc-header-left">
-                <span class="sp-bc-icon sp-bc-icon--user"><el-icon :size="16"><User /></el-icon></span>
-                <span class="sp-bc-title">个人信息</span>
-              </div>
-            </div>
-            <div class="sp-bc-body sp-bc-body--user">
-              <div class="sp-user-avatar-row">
-                <div class="sp-user-avatar">{{ (currentUser?.alias || currentUser?.username || '?').charAt(0).toUpperCase() }}</div>
-                <div class="sp-user-avatar-info">
-                  <div class="sp-user-avatar-name">{{ currentUser?.alias || currentUser?.username || '—' }}</div>
-                  <el-tag size="small" effect="plain" :type="currentUser?.role === 'admin' ? 'danger' : 'primary'">{{ roleLabel }}</el-tag>
-                </div>
-              </div>
-              <div class="sp-kv-section sp-kv-section--compact">
-                <div class="sp-kv-row"><span class="sp-kv-label">用户名</span><span class="sp-kv-value">{{ currentUser?.username || '—' }}</span></div>
-                <div class="sp-kv-row"><span class="sp-kv-label">所属账套</span><span class="sp-kv-value sp-kv-value--mono">{{ currentUser?.companyId || '—' }}</span></div>
-              </div>
-              <div class="sp-user-actions">
-                <el-button class="sp-pwd-btn" @click="pwdDialogOpen = true"><el-icon><Lock /></el-icon>修改密码</el-button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- ===== 账套管理 ===== -->
-        <div v-else-if="activeMenu === 'accounts'" class="sp-panel">
-          <div class="sp-panel-header">
-            <div class="sp-panel-title-line"></div><span>账套列表</span>
-            <el-button size="small" type="primary" style="margin-left:auto" @click="handleCreateCompany"><el-icon><Plus /></el-icon>新增账套</el-button>
-          </div>
-          <div class="sp-panel-body">
-            <div class="ck-list">
-              <div v-for="row in companies" :key="row.id" class="ck-item" :class="row.id === company?.id ? 'ck-item--pass' : ''">
-                <div class="ck-body">
-                  <template v-if="editingAccountId === row.id">
-                    <div class="ck-name" style="display:flex;align-items:center;gap:8px">
-                      <el-input v-model="editingAccountName" size="small" style="width:200px" @keyup.enter="saveRenameAccount(row)" @keyup.escape="cancelRenameAccount" />
-                      <el-button size="small" type="primary" @click="saveRenameAccount(row)">确定</el-button>
-                      <el-button size="small" @click="cancelRenameAccount">取消</el-button>
-                    </div>
-                  </template>
-                  <template v-else>
+        <div v-if="activeMenu === 'accounts'" class="sp-accounts-page">
+          <!-- 账套列表 -->
+          <div class="sp-panel">
+            <div class="sp-panel-header">
+              <div class="sp-panel-title-line"></div><span>账套列表</span>
+              <el-button size="small" type="primary" style="margin-left:auto" @click="handleCreateCompany"><el-icon><Plus /></el-icon>新增账套</el-button>
+            </div>
+            <div class="sp-panel-body">
+              <div class="ck-list">
+                <div v-for="row in companies" :key="row.id" class="ck-item" :class="row.id === company?.id ? 'ck-item--pass' : ''">
+                  <div class="ck-body">
                     <div class="ck-name">
                       <span :class="{ 'sp-current-name': row.id === company?.id }">{{ row.name }}</span>
                       <el-tag v-if="row.id === company?.id" size="small" type="primary" effect="dark" style="margin-left:6px">当前</el-tag>
@@ -586,14 +691,14 @@ function formatFileSize(bytes: number): string {
                       <span v-if="row.legalRepresentative">· 法人 {{ row.legalRepresentative }}</span>
                       <span class="ck-detail-text">· {{ row.createdAt?.slice(0,10) || '' }}</span>
                     </div>
-                  </template>
+                  </div>
+                  <div class="ck-actions">
+                    <el-button size="small" text type="primary" @click="openEditCompany(row)">编辑</el-button>
+                    <el-button v-if="isAdmin" size="small" text type="danger" :disabled="row.id === company?.id" @click="openDeleteConfirm(row)">删除</el-button>
+                  </div>
                 </div>
-                <div v-if="editingAccountId !== row.id" class="ck-actions">
-                  <el-button size="small" text type="primary" @click="startRenameAccount(row)" :disabled="editingAccountId !== null">重命名</el-button>
-                  <el-button size="small" text type="danger" :disabled="row.id === company?.id" @click="openDeleteConfirm(row)">删除</el-button>
-                </div>
+                <el-empty v-if="!companies.length" description="暂无账套数据" :image-size="80" />
               </div>
-              <el-empty v-if="!companies.length" description="暂无账套数据" :image-size="80" />
             </div>
           </div>
         </div>
@@ -617,9 +722,72 @@ function formatFileSize(bytes: number): string {
                     {{ row.is_default===1 ? '默认' : '设为默认' }}
                   </el-radio>
                   <el-button size="small" text type="primary" @click="openEditVw(row)">编辑</el-button>
+                  <el-button size="small" text type="danger" @click="handleDeleteVw(row)">删除</el-button>
                 </div>
               </div>
               <el-empty v-if="!voucherWords.length && !vwLoading" description="暂无凭证字" :image-size="80" />
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 辅助核算 ===== -->
+        <div v-else-if="activeMenu === 'auxProjects'" class="sp-panel">
+          <div class="sp-panel-header">
+            <div class="sp-panel-title-line"></div><span>辅助核算类别</span>
+            <span class="sp-panel-subtitle">管理辅助核算类别及其项目值，用于科目的辅助核算关联</span>
+            <el-button size="small" type="primary" style="margin-left:auto" @click="openCreateAuxType"><el-icon><Plus /></el-icon>新增类别</el-button>
+          </div>
+          <div class="sp-panel-body" style="padding:12px 22px">
+            <div class="aux-layout" v-loading="auxTypesLoading">
+              <!-- 左侧：类别列表 -->
+              <div class="aux-left">
+                <div class="ck-list">
+                  <div
+                    v-for="t in auxTypes"
+                    :key="t.id"
+                    class="ck-item aux-type-item"
+                    :class="selectedAuxType?.id === t.id ? 'ck-item--pass' : ''"
+                    @click="selectAuxType(t)"
+                    style="cursor:pointer"
+                  >
+                    <div class="ck-body">
+                      <div class="ck-name">{{ t.name }}</div>
+                      <div class="ck-desc">编码：{{ t.code }}</div>
+                    </div>
+                    <div class="ck-actions" @click.stop style="gap:4px">
+                      <el-button size="small" text type="primary" @click="openEditAuxType(t)">编辑</el-button>
+                      <el-button size="small" text type="danger" @click="deleteAuxType(t)">删除</el-button>
+                    </div>
+                  </div>
+                  <el-empty v-if="!auxTypes.length && !auxTypesLoading" description="暂无辅助核算类别" :image-size="60" />
+                </div>
+              </div>
+              <!-- 右侧：项目值列表 -->
+              <div class="aux-right">
+                <div v-if="selectedAuxType" class="aux-values-section">
+                  <div class="aux-values-header">
+                    <span class="aux-values-title">{{ selectedAuxType.name }} — 项目列表</span>
+                    <el-button size="small" type="primary" @click="openCreateAuxValue"><el-icon><Plus /></el-icon>新增项目</el-button>
+                  </div>
+                  <div class="ck-list" style="margin-top:8px">
+                    <div v-for="v in auxValues" :key="v.id" class="ck-item" :class="v.enabled ? '' : 'ck-item--warn'">
+                      <div class="ck-body">
+                        <div class="ck-name">{{ v.name }}</div>
+                        <div class="ck-desc">编码：{{ v.code }}</div>
+                      </div>
+                      <div class="ck-actions" style="gap:4px">
+                        <el-button size="small" text type="primary" @click="openEditAuxValue(v)">编辑</el-button>
+                        <el-button size="small" text type="danger" @click="deleteAuxValue(v)">删除</el-button>
+                      </div>
+                    </div>
+                    <el-empty v-if="!auxValues.length" description="暂无核算项目" :image-size="60" />
+                  </div>
+                </div>
+                <div v-else class="aux-placeholder">
+                  <el-icon :size="32"><Collection /></el-icon>
+                  <span>请从左侧选择一个辅助核算类别</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -664,6 +832,7 @@ function formatFileSize(bytes: number): string {
                   />
                   <span v-else class="sp-disabled-hint" style="font-size:11px;color:var(--epp-ink-sub)">系统保留</span>
                   <el-button size="small" text type="primary" @click="openEditUser(row)">编辑</el-button>
+                  <el-button size="small" text type="warning" @click="openResetPassword(row)">修改密码</el-button>
                 </div>
               </div>
               <el-empty v-if="!users.length" description="暂无用户数据" :image-size="80" />
@@ -782,6 +951,11 @@ function formatFileSize(bytes: number): string {
                   <div class="db-action-body"><div class="db-action-title">导出数据 (JSON)</div><div class="db-action-desc">将所有表数据导出为 JSON 格式文件，可用于迁移或数据分析</div></div>
                   <el-button type="primary" plain :loading="exporting" @click="handleExportJson">{{ exporting?'导出中...':'导出' }}</el-button>
                 </div>
+                <div class="db-action-card">
+                  <div class="db-action-icon" style="background:rgba(234,179,8,0.1);color:#eab308"><el-icon :size="24"><FolderOpened /></el-icon></div>
+                  <div class="db-action-body"><div class="db-action-title">全量导出备份</div><div class="db-action-desc">将数据库文件及所有附件完整打包导出，可用于完整迁移或灾难恢复</div></div>
+                  <el-button type="primary" plain :loading="exporting" @click="handleExportAll">{{ exporting?'导出中...':'导出' }}</el-button>
+                </div>
               </div>
             </div>
           </div>
@@ -807,7 +981,35 @@ function formatFileSize(bytes: number): string {
       </div><!-- /sp-content -->
     </div><!-- /sp-layout -->
 
-    <!-- ========== 删除账套确认对话框（输入名称确认） ========== -->
+    <!-- ========== 编辑账套对话框 ========== -->
+    <el-dialog v-model="editCompanyDialogOpen" :title="`编辑账套 — ${editCompanyTarget?.name || ''}`" width="540px" :close-on-click-modal="false" draggable>
+      <el-form :model="editCompanyForm" label-width="110px" class="sp-company-form">
+        <el-form-item label="账套名称" required>
+          <el-input v-model="editCompanyForm.name" placeholder="请输入账套名称" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="联系人">
+          <el-input v-model="editCompanyForm.contactPerson" placeholder="联系人姓名" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="法人代表">
+          <el-input v-model="editCompanyForm.legalRepresentative" placeholder="法人代表姓名" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="联系电话">
+          <el-input v-model="editCompanyForm.phone" placeholder="如 010-12345678" maxlength="30" />
+        </el-form-item>
+        <el-form-item label="地址">
+          <el-input v-model="editCompanyForm.address" placeholder="公司地址" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="统一社会信用代码">
+          <el-input v-model="editCompanyForm.taxNo" placeholder="18位统一社会信用代码" maxlength="18" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editCompanyDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="savingEditCompany" @click="handleSaveEditCompany">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ========== 删除账套确认对话框（输入名称 + 密码授权） ========== -->
     <el-dialog v-model="deleteConfirmOpen" title="删除账套" width="440px" :close-on-click-modal="false">
       <div style="margin-bottom:16px;font-size:14px;color:#303133">
         此操作<strong style="color:#f56c6c">不可恢复</strong>，关联的所有数据将被同时删除。
@@ -815,23 +1017,27 @@ function formatFileSize(bytes: number): string {
       <div style="margin-bottom:8px;font-size:13px;color:#909399">
         请输入账套名称 <strong style="color:#303133">{{ deleteTarget?.name }}</strong> 以确认删除：
       </div>
-      <el-input v-model="deleteConfirmInput" placeholder="请输入账套名称" @keyup.enter="confirmDeleteCompany" />
+      <el-input v-model="deleteConfirmInput" placeholder="请输入账套名称" style="margin-bottom:16px" />
+      <div style="margin-bottom:8px;font-size:13px;color:#909399">
+        请输入<strong style="color:#303133">管理员密码</strong>进行授权：
+      </div>
+      <el-input v-model="deleteAuthPassword" type="password" show-password placeholder="请输入管理员密码" @keyup.enter="confirmDeleteCompany" />
       <template #footer>
         <el-button @click="deleteConfirmOpen = false">取消</el-button>
-        <el-button type="danger" :disabled="deleteConfirmInput !== deleteTarget?.name" @click="confirmDeleteCompany">
+        <el-button type="danger" :disabled="deleteConfirmInput !== deleteTarget?.name || !deleteAuthPassword" :loading="deleting" @click="confirmDeleteCompany">
           确认删除
         </el-button>
       </template>
     </el-dialog>
 
-    <!-- ========== 修改密码对话框 ========== -->
-    <el-dialog v-model="pwdDialogOpen" title="修改密码" width="420px" :close-on-click-modal="false" draggable>
+    <!-- ========== 重置密码对话框（管理员） ========== -->
+    <el-dialog v-model="pwdDialogOpen" title="重置密码" width="420px" :close-on-click-modal="false" draggable>
+      <div style="margin-bottom:16px;font-size:14px;color:#303133">
+        正在为用户 <strong>{{ pwdTargetUser?.username }}</strong>{{ pwdTargetUser?.alias ? `（${pwdTargetUser.alias}）` : '' }} 重置密码
+      </div>
       <el-form :model="pwdForm" label-width="90px">
-        <el-form-item label="原密码">
-          <el-input v-model="pwdForm.oldPassword" type="password" show-password placeholder="请输入原密码" />
-        </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="请输入新密码" />
+          <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="请输入新密码（至少4位）" />
         </el-form-item>
         <el-form-item label="确认新密码">
           <el-input v-model="pwdForm.confirmPassword" type="password" show-password placeholder="请再次输入新密码" />
@@ -839,7 +1045,7 @@ function formatFileSize(bytes: number): string {
       </el-form>
       <template #footer>
         <el-button @click="pwdDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="savingPwd" @click="changePassword">确认修改</el-button>
+        <el-button type="primary" :loading="savingPwd" @click="resetPassword">确认重置</el-button>
       </template>
     </el-dialog>
 
@@ -898,6 +1104,42 @@ function formatFileSize(bytes: number): string {
         <el-button @click="vwDialog.open = false">取消</el-button>
         <el-button type="primary" :loading="savingVw" @click="saveVoucherWord">
           {{ vwDialog.mode === 'create' ? '创建' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ========== 辅助核算类别新增/编辑对话框 ========== -->
+    <el-dialog v-model="auxTypeDialog.open" :title="auxTypeDialog.mode === 'create' ? '新增辅助核算类别' : '编辑辅助核算类别'" width="440px" :close-on-click-modal="false" draggable>
+      <el-form :model="auxTypeDialog" label-width="90px">
+        <el-form-item label="类别编码" required>
+          <el-input v-model="auxTypeDialog.code" placeholder="如 DEPT、CUSTOMER" maxlength="20" />
+        </el-form-item>
+        <el-form-item label="类别名称" required>
+          <el-input v-model="auxTypeDialog.name" placeholder="如 部门、客户" maxlength="50" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="auxTypeDialog.open = false">取消</el-button>
+        <el-button type="primary" :loading="savingAuxType" @click="saveAuxType">
+          {{ auxTypeDialog.mode === 'create' ? '创建' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ========== 辅助核算项目值新增/编辑对话框 ========== -->
+    <el-dialog v-model="auxValueDialog.open" :title="auxValueDialog.mode === 'create' ? '新增核算项目' : '编辑核算项目'" width="440px" :close-on-click-modal="false" draggable>
+      <el-form :model="auxValueDialog" label-width="90px">
+        <el-form-item label="项目编码" required>
+          <el-input v-model="auxValueDialog.code" placeholder="如 001、A001" maxlength="20" />
+        </el-form-item>
+        <el-form-item label="项目名称" required>
+          <el-input v-model="auxValueDialog.name" placeholder="如 财务部、张三" maxlength="50" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="auxValueDialog.open = false">取消</el-button>
+        <el-button type="primary" :loading="savingAuxValue" @click="saveAuxValue">
+          {{ auxValueDialog.mode === 'create' ? '创建' : '保存' }}
         </el-button>
       </template>
     </el-dialog>
@@ -1845,10 +2087,83 @@ function formatFileSize(bytes: number): string {
   color: #cbd5e1;
 }
 
+/* ---- 辅助核算双栏布局 ---- */
+.aux-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 280px;
+}
+
+.aux-left {
+  width: 300px;
+  min-width: 300px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--epp-line-light);
+  padding-right: 16px;
+  overflow-y: auto;
+}
+
+.aux-type-item {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.aux-type-item:hover {
+  border-color: var(--epp-accent);
+}
+
+.aux-right {
+  flex: 1;
+  min-width: 0;
+}
+
+.aux-values-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.aux-values-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--epp-line-light);
+}
+
+.aux-values-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--epp-ink-text);
+}
+
+.aux-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 200px;
+  color: var(--epp-ink-sub);
+  font-size: 13px;
+}
+
 /* ---- 响应式：窄屏折叠为单列 ---- */
 @media (max-width: 780px) {
   .sp-basic-grid {
     grid-template-columns: 1fr;
+  }
+  .aux-layout {
+    flex-direction: column;
+  }
+  .aux-left {
+    width: 100%;
+    min-width: unset;
+    border-right: none;
+    padding-right: 0;
+    border-bottom: 1px solid var(--epp-line-light);
+    padding-bottom: 12px;
+    max-height: 200px;
   }
 }
 </style>

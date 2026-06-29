@@ -7,6 +7,7 @@ import type {
   SubjectPayload, VoucherPayload, VoucherFilter, OpeningBalance,
   SubjectBalance, DetailLedgerResult, GeneralLedgerRow,
   TrialBalance, ProfitStatement, BalanceSheet, CashFlowStatement, YearEndIntegrityCheck,
+  EquityChangeStatement, TaxPayableDetail, ExpenseSummary, AgingAnalysis, DepreciationSummary,
   AuxProjectType, AuxProjectValue, AuxProjectPayload,
   QuantityDetailLedgerRow, QuantityGeneralLedgerRow,
   AuxProjectBalanceRow, AuxProjectDetailRow,
@@ -15,7 +16,12 @@ import type {
 } from '../vite-env';
 
 function ipc(channel: string, payload?: unknown): Promise<any> {
-  return window.electronAPI!.invoke(`finance:${channel}`, payload);
+  return window.electronAPI!.invoke(`finance:${channel}`, payload).then((result: any) => {
+    if (result && typeof result === 'object' && '__error' in result) {
+      throw new Error(result.__error);
+    }
+    return result;
+  });
 }
 
 export class ElectronFinanceApi implements FinanceApi {
@@ -34,6 +40,7 @@ export class ElectronFinanceApi implements FinanceApi {
   async createUser(payload: UserPayload): Promise<SysUser> { return ipc('createUser', payload); }
   async updateUser(id: number, data: { alias?: string; role?: UserRole; enabled?: number }): Promise<SysUser> { return ipc('updateUser', { id, ...data }); }
   async changePassword(oldPassword: string, newPassword: string): Promise<boolean> { return ipc('changePassword', { id: this.getCachedUserId(), oldPassword, newPassword }); }
+  async resetUserPassword(userId: number, newPassword: string): Promise<boolean> { return ipc('resetPassword', { id: userId, newPassword }); }
   async getUserProfile() {
     const id = this.getCachedUserId();
     if (!id) return null;
@@ -134,6 +141,11 @@ export class ElectronFinanceApi implements FinanceApi {
   async getProfitStatement(period: string): Promise<ProfitStatement> { return ipc('getProfitStatement', period); }
   async getBalanceSheet(period: string): Promise<BalanceSheet> { return ipc('getBalanceSheet', period); }
   async getCashFlowStatement(period: string): Promise<CashFlowStatement> { return ipc('getCashFlowStatement', period); }
+  async getEquityChangeStatement(period: string): Promise<EquityChangeStatement> { return ipc('getEquityChangeStatement', period); }
+  async getTaxPayableDetail(period: string): Promise<TaxPayableDetail> { return ipc('getTaxPayableDetail', period); }
+  async getExpenseSummary(period: string): Promise<ExpenseSummary> { return ipc('getExpenseSummary', period); }
+  async getReceivableAging(period: string): Promise<AgingAnalysis> { return ipc('getReceivableAging', period); }
+  async getPayableAging(period: string): Promise<AgingAnalysis> { return ipc('getPayableAging', period); }
   async checkYearEndIntegrity(currentPeriod?: string): Promise<YearEndIntegrityCheck> { return ipc('checkYearEndIntegrity', currentPeriod); }
 
   /* 辅助核算类别 */
@@ -162,6 +174,7 @@ export class ElectronFinanceApi implements FinanceApi {
   /* 辅助核算报表 */
   async getAuxProjectBalance(f?: { auxTypeId?: number; auxValueId?: number; period?: string }): Promise<AuxProjectBalanceRow[]> { return ipc('getAuxProjectBalance', f); }
   async getAuxProjectDetail(f?: { auxTypeId?: number; auxValueId?: number; period?: string }): Promise<{ rows: AuxProjectDetailRow[]; total: number }> { return ipc('getAuxProjectDetail', f); }
+  async getAuxProjectCombo(f?: { period?: string; auxTypeId?: number }) { return ipc('getAuxProjectCombo', f); }
 
   /* 凭证字管理 */
   async listVoucherWords(): Promise<VoucherWordType[]> { return ipc('listVoucherWords'); }
@@ -204,4 +217,5 @@ export class ElectronFinanceApi implements FinanceApi {
   async deleteAssetCard(id: number) { return ipc('deleteAssetCard', id); }
   async depreciateAsset(id: number, periods = 1) { return ipc('depreciateAsset', { id, periods }); }
   async getAssetStats() { return ipc('getAssetStats'); }
+  async getDepreciationSummary(period: string): Promise<DepreciationSummary> { return ipc('getDepreciationSummary', period); }
 }
