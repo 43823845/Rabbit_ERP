@@ -24,6 +24,13 @@ import { getTemplatesByType } from '../../shared/report-templates.cjs';
 // @ts-ignore - CJS module
 import { fillTemplateAmount, classifyCashFlowCategory } from '../../shared/report-formulas.cjs';
 
+async function hashPassword(pwd: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`rabbit_erp_salt_${pwd}`);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function getBuiltinSubjects(): FinanceSubject[] {
   return [
     // ========== 资产类 ==========
@@ -376,9 +383,9 @@ export class MockFinanceApi implements FinanceApi {
   /* ---- Auth ---- */
   async login(username: string, password: string): Promise<AuthUser | null> {
     const users = this.getUsersSync();
-    const user = users.find(u => u.username === username);
-    // Mock: simple password check (in-memory, not hashed)
-    if (!user || user._password !== password || !user.enabled) return null;
+    const hashedInput = await hashPassword(password);
+    const user = users.find((u: any) => u.username === username && u._password === hashedInput);
+    if (!user || !user.enabled) return null;
     const companies = this.getCompaniesSync();
     if (companies.length === 0) {
       companies.push({ id: 'default', name: '默认公司', period: '2026-06', createdAt: new Date().toISOString() });
@@ -409,7 +416,7 @@ export class MockFinanceApi implements FinanceApi {
     const user = {
       id: Date.now(),
       username: payload.username,
-      _password: payload.password,
+      _password: await hashPassword(payload.password),
       alias: payload.alias || payload.username,
       role: payload.role || 'accountant',
       enabled: 1,
@@ -437,8 +444,9 @@ export class MockFinanceApi implements FinanceApi {
     const users = this.getUsersSync();
     const user = users.find((u: any) => u.id === authState);
     if (!user) throw new Error('用户不存在');
-    if (user._password !== oldPassword) throw new Error('原密码错误');
-    user._password = newPassword;
+    const hashedOld = await hashPassword(oldPassword);
+    if (user._password !== hashedOld) throw new Error('原密码错误');
+    user._password = await hashPassword(newPassword);
     this.saveUsers(users);
     return true;
   }
