@@ -104,6 +104,7 @@ async function refreshBalances() {
     ElMessage.warning('资金余额数据加载失败，请检查数据库连接');
     balanceCards.value = [];
   }
+}
 
 function formatBalance(balance: number): string {
   const abs = Math.abs(balance);
