@@ -99,8 +99,11 @@ async function refreshBalances() {
     }
 
     balanceCards.value = cards;
-  } catch { /* 余额获取失败时静默处理 */ }
-}
+  } catch (e: any) {
+    console.error('[Dashboard] 获取余额失败:', e?.message || e);
+    ElMessage.warning('资金余额数据加载失败，请检查数据库连接');
+    balanceCards.value = [];
+  }
 
 function formatBalance(balance: number): string {
   const abs = Math.abs(balance);
