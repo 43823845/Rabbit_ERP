@@ -108,16 +108,19 @@ async function loadCompanies() {
 }
 
 async function refreshCompanies() {
+  companiesLoading.value = true;
   try {
-    companies.value = await api.getCompanies();
-    companiesCache.value = companies.value;
+    const list = await api.getCompanies();
+    companies.value = list;
+    companiesCache.value = list;
   } catch {
     // 刷新失败时保留旧数据
-    if (companiesCache.value.length > 0 && companies.value.length === 0) {
+    if (companiesCache.value.length > 0) {
       companies.value = companiesCache.value;
     }
+  } finally {
+    companiesLoading.value = false;
   }
-  companiesLoaded.value = true;
 }
 
 async function handleSwitchCompany(companyId: string) {

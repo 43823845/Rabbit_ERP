@@ -277,7 +277,15 @@ AssetView.vue → depreciateAsset(id)
 /closing      → ClosingView.vue        期末结账（需认证）
 /assets       → AssetView.vue          固定资产（需认证）
 /settings     → SettingsView.vue       系统设置（需认证）
+                   ├── SettingsView.vue     外壳：页头/导航/对话框 + provide 注入
+                   └── SettingsSubView.vue  8个子视图面板（inject 消费状态）
 ```
+
+### 5.1 SettingsView 组件拆分
+
+`SettingsView.vue` 通过 Vue 3 的 `provide`/`inject` 模式将状态共享给 `SettingsSubView.vue`：
+- **SettingsView.vue**：负责导航栏、全局对话框（新增/编辑凭证字、辅助核算、账套、用户、重置密码、删除确认）、所有业务逻辑方法
+- **SettingsSubView.vue**：纯渲染层，通过 `inject('settingsState')` 获取响应式状态，渲染 8 个子视图面板——账套管理/凭证字/辅助核算/期间管理/用户管理/操作日志/数据管理/系统信息
 
 ### 路由守卫
 
