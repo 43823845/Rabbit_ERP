@@ -184,9 +184,11 @@ async function doSearch() {
 }
 
 function resetFilter() {
-  filter.period = ''; filter.status = undefined; filter.keyword = '';
+  filter.status = undefined; filter.keyword = '';
   filter.subjectCode = undefined; filter.startDate = ''; filter.endDate = '';
   filter.amountMin = undefined; filter.amountMax = undefined;
+  activeCard.value = null;
+  // 保留 period，仅清除筛选条件
 }
 
 function openVoucher(v: FinanceVoucher) { voucherModal.voucher = v; voucherModal.open = true; }

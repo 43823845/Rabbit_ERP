@@ -344,6 +344,22 @@ function resetOpLogFilter() {
   loadOpLogs();
 }
 
+function exportOpLogs() {
+  if (opLogs.value.length === 0) { ElMessage.warning('无日志可导出'); return; }
+  const csv = ['\uFEFF日期,操作类型,目标,详情,用户']
+    .concat(opLogs.value.map(l =>
+      `${l.createdAt},${l.action},"${l.target}","${l.detail}",${l.username}`
+    )).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `操作日志_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  ElMessage.success('操作日志已导出');
+}
+
 function actionLabel(action: string): string {
   const map: Record<string, string> = {
     '创建凭证': '创建', '删除凭证': '删除', '审核': '审核', '批量审核': '审核',
@@ -687,6 +703,7 @@ function formatFileSize(bytes: number): string {
                 </el-select>
               </div>
               <div class="oplog-filter-right">
+                <el-button size="small" @click="exportOpLogs"><el-icon><Download /></el-icon>导出</el-button>
                 <el-button size="small" text @click="resetOpLogFilter"><el-icon><RefreshRight /></el-icon>重置</el-button>
                 <span class="oplog-count">共 {{ opLogs.length }} 条</span>
               </div>

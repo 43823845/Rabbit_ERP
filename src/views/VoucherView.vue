@@ -74,8 +74,13 @@ async function handleReorder() {
     const summary = (result as Array<{ word: string; count: number }> || []).map(r => `${r.word}字×${r.count}`).join('、');
     ElMessage.success(`断号已整理：${summary || '无需整理'}`);
   } catch {
-    await api.reorderVoucherNos({ voucherWord: '记', period });
-    ElMessage.success('已整理记字凭证编号');
+    // 回退：只整理"记"字凭证
+    try {
+      await api.reorderVoucherNos({ voucherWord: '记', period });
+      ElMessage.warning('仅成功整理了「记」字凭证编号，其他凭证字整理失败，请手动调整');
+    } catch (e2: any) {
+      ElMessage.error('凭证编号整理失败：' + (e2?.message || '未知错误'));
+    }
   }
   refresh();
 }
