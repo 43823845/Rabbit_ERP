@@ -36,7 +36,7 @@ function applyDataManagerMethods(FinanceDatabase) {
       }
     } catch (_) { /* */ }
 
-    return { dbPath, dbSize, pageCount, freelistCount, tableCounts, isMock: false };
+    return { dbPath, dbSize, pageCount, freelistCount, tableCounts };
   };
 
   /**

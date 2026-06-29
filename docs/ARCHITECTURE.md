@@ -18,9 +18,6 @@
 │  │                      │   │  FinanceDatabase  │ │
 │  │                      │   │  (业务逻辑)        │ │
 │  └──────────────────────┘   └──────────────────┘ │
-│                                                   │
-│  浏览器开发模式: MockFinanceApi (localStorage)     │
-│  Electron 模式:   ElectronFinanceApi (IPC→SQLite) │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -72,17 +69,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 ---
 
-## 3. API 层工厂模式
+## 3. API 层
 
 ```
 src/api/index.ts
     │
-    ├── window.electronAPI ?
-    │   └── YES → import('./electron') → ElectronFinanceApi
-    │            (通过 IPC → 主进程 SQLite)
-    │
-    └── NO → import('./mock') → MockFinanceApi
-             (localStorage 存储，浏览器开发用)
+    └── ElectronFinanceApi (IPC → 主进程 SQLite)
 ```
 
 ### 初始化时序
@@ -111,9 +103,7 @@ LoginView.vue
     │
     ├── 用户输入 + 选择账套
     │
-    ├── api.login(user, pass)
-    │   ├── MockFinanceApi: local storage 验证
-    │   └── ElectronFinanceApi: IPC → main 验证
+    ├── api.login(user, pass) → IPC → main 验证
     │
     ├── api.switchCompany(companyId)  若选择不同账套
     │
@@ -270,10 +260,7 @@ auth.ts (Reactive State)
 ## 9. 启动命令
 
 ```bash
-# 开发模式（浏览器，localStorage Mock）
-npm run dev
-
-# 开发模式（Electron + SQLite）
+# 开发模式（Electron + HMR 热更新）
 npm run dev:electron
 
 # 生产构建

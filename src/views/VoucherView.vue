@@ -133,15 +133,9 @@ async function handleExport() {
       const dateStr = (v.voucher_date || '').replace(/[: ]/g, '-').substring(0, 10);
       const fileName = `${v.voucher_word}-${String(v.voucher_no).padStart(3, '0')}_${dateStr}.png`;
 
-      if (window.electronAPI) {
-        const result = await window.electronAPI.invoke('save-png', { dataUrl, fileName }) as { success?: boolean; error?: string };
-        if (result?.success) successCount++;
-        else { failCount++; console.error(`保存失败 [${fileName}]:`, result?.error); }
-      } else {
-        const a = document.createElement('a');
-        a.href = dataUrl; a.download = fileName; a.click();
-        successCount++;
-      }
+      const result = await window.electronAPI!.invoke('save-png', { dataUrl, fileName }) as { success?: boolean; error?: string };
+      if (result?.success) successCount++;
+      else { failCount++; console.error(`保存失败 [${fileName}]:`, result?.error); }
     } catch (e) {
       console.error('导出凭证失败:', e);
       failCount++;

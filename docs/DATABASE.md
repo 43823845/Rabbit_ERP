@@ -9,7 +9,6 @@
 | WAL 模式 | 启用（并发读性能） |
 | 外键约束 | 启用 (PRAGMA foreign_keys = ON) |
 | 数据库密码 | PBKDF2-SHA256 哈希，默认密码 `123456` |
-| 开发备选 | localStorage Mock API (浏览器模式) |
 | 模块化 | 14 个独立模块文件（schema / companies / users / subjects / vouchers / periods / openings / reports / auxiliary / attachments / voucher-words / multi-column / data-manager / utils） |
 
 ---

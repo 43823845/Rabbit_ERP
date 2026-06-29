@@ -50,7 +50,7 @@ const subjectsCount = ref(0);
 
 const currentUser = computed(() => auth.state.user);
 const isAdmin = computed(() => currentUser.value?.role === 'admin');
-const isElectron = computed(() => !!window.electronAPI);
+
 
 const roleLabel = computed(() => {
   const map: Record<string, string> = {

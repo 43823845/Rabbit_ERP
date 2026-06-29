@@ -13,10 +13,9 @@ import { APP_CONFIG } from '../config';
 const api = getFinanceApi();
 
 /* Electron 窗口控制 */
-const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
-function winMin() { window.electronAPI?.windowMin(); }
-function winMax() { window.electronAPI?.windowMax(); }
-function winClose() { window.electronAPI?.windowClose(); }
+function winMin() { window.electronAPI!.windowMin(); }
+function winMax() { window.electronAPI!.windowMax(); }
+function winClose() { window.electronAPI!.windowClose(); }
 const router = useRouter();
 const auth = useAuth();
 
@@ -141,7 +140,7 @@ async function handleCreateCompany() {
 <template>
   <div class="login-page">
     <!-- Electron 窗口控制栏 -->
-    <div v-if="isElectron" class="login-win-ctrl">
+    <div class="login-win-ctrl">
       <span class="win-ctrl-btn" @click="winMin" title="最小化"><el-icon><Minus /></el-icon></span>
       <span class="win-ctrl-btn" @click="winMax" title="最大化"><el-icon><CopyDocument /></el-icon></span>
       <span class="win-ctrl-btn win-ctrl-close" @click="winClose" title="关闭"><el-icon><Close /></el-icon></span>

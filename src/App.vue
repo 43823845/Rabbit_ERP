@@ -19,9 +19,8 @@ const companies = ref<Company[]>([]);
 const collapsed = ref(false);
 const routerViewKey = ref(0);
 
-const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
-function winMin() { isElectron && window.electronAPI?.windowMin(); }
-function winMax() { isElectron && window.electronAPI?.windowMax(); }
+function winMin() { window.electronAPI!.windowMin(); }
+function winMax() { window.electronAPI!.windowMax(); }
 
 /* ---- 系统状态指示器 ---- */
 const now = ref(new Date());
@@ -189,7 +188,7 @@ function handleUserCmd(cmd: string) {
           </template>
         </el-dropdown>
         <!-- 窗口控制按钮（Electron 无边框模式） -->
-        <template v-if="isElectron">
+        <template>
           <span class="win-ctrl-spacer"></span>
           <span class="win-ctrl-btn" @click="winMin" title="最小化"><el-icon><Minus /></el-icon></span>
           <span class="win-ctrl-btn" @click="winMax" title="最大化"><el-icon><CopyDocument /></el-icon></span>
@@ -292,7 +291,6 @@ html, body, #app { margin: 0; padding: 0; width: 100%; height: 100%; }
 }
 .topbar-status-dot.online  { background: #10b981; box-shadow: 0 0 4px rgba(16,185,129,.5); }
 .topbar-status-dot.offline { background: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,.5); }
-.topbar-status-dot.mock   { background: #f59e0b; box-shadow: 0 0 4px rgba(245,158,11,.5); }
 .topbar-status-dot.checking { background: #94a3b8; animation: pulse-dot 1.2s infinite; }
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
