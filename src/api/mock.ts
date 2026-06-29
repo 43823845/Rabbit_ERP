@@ -164,6 +164,11 @@ interface Store {
   voucherSummaries: { id: number; text: string; category: string; createdAt: string }[];
 }
 
+interface MockUser {
+  id: number; username: string; _password: string;
+  alias: string; role: UserRole; enabled: number; createdAt: string;
+}
+
 export class MockFinanceApi implements FinanceApi {
   private companyId: string | null = null;
   private store!: Store;
@@ -384,7 +389,7 @@ export class MockFinanceApi implements FinanceApi {
   async login(username: string, password: string): Promise<AuthUser | null> {
     const users = this.getUsersSync();
     const hashedInput = await hashPassword(password);
-    const user = users.find((u: any) => u.username === username && u._password === hashedInput);
+    const user = users.find(u => u.username === username && u._password === hashedInput);
     if (!user || !user.enabled) return null;
     const companies = this.getCompaniesSync();
     if (companies.length === 0) {
@@ -397,22 +402,22 @@ export class MockFinanceApi implements FinanceApi {
     return { userId: user.id, username: user.username, alias: user.alias, role: user.role, companyId: this.companyId, companyName: companies[0].name };
   }
 
-  private getUsersSync(): any[] {
+  private getUsersSync(): MockUser[] {
     try { return JSON.parse(localStorage.getItem('finance_users') || '[]'); }
     catch (e) { console.warn('[MockApi] 解析用户列表失败:', e); return []; }
   }
 
-  private saveUsers(list: any[]) {
+  private saveUsers(list: MockUser[]) {
     localStorage.setItem('finance_users', JSON.stringify(list));
   }
 
   async listUsers(): Promise<SysUser[]> {
-    return this.getUsersSync().map((u: any) => ({ id: u.id, username: u.username, alias: u.alias, role: u.role, enabled: u.enabled, createdAt: u.createdAt }));
+    return this.getUsersSync().map(u => ({ id: u.id, username: u.username, alias: u.alias, role: u.role, enabled: u.enabled, createdAt: u.createdAt }));
   }
 
   async createUser(payload: UserPayload): Promise<SysUser> {
     const users = this.getUsersSync();
-    if (users.find((u: any) => u.username === payload.username)) throw new Error('用户名已存在');
+    if (users.find(u => u.username === payload.username)) throw new Error('用户名已存在');
     const user = {
       id: Date.now(),
       username: payload.username,
@@ -429,7 +434,7 @@ export class MockFinanceApi implements FinanceApi {
 
   async updateUser(id: number, data: { alias?: string; role?: UserRole; enabled?: number }): Promise<SysUser> {
     const users = this.getUsersSync();
-    const idx = users.findIndex((u: any) => u.id === id);
+    const idx = users.findIndex(u => u.id === id);
     if (idx < 0) throw new Error('用户不存在');
     if (data.alias !== undefined) users[idx].alias = data.alias;
     if (data.role !== undefined) users[idx].role = data.role;
@@ -442,7 +447,7 @@ export class MockFinanceApi implements FinanceApi {
     if (!newPassword || newPassword.length < 4) throw new Error('新密码至少4位');
     const authState = this.getCachedUserId();
     const users = this.getUsersSync();
-    const user = users.find((u: any) => u.id === authState);
+    const user = users.find(u => u.id === authState);
     if (!user) throw new Error('用户不存在');
     const hashedOld = await hashPassword(oldPassword);
     if (user._password !== hashedOld) throw new Error('原密码错误');
@@ -455,7 +460,7 @@ export class MockFinanceApi implements FinanceApi {
     const id = this.getCachedUserId();
     if (!id) return null;
     const users = this.getUsersSync();
-    const u = users.find((x: any) => x.id === id);
+    const u = users.find(x => x.id === id);
     if (!u) return null;
     return { userId: u.id, username: u.username, alias: u.alias, role: u.role };
   }
