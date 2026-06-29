@@ -104,6 +104,15 @@ function applyVoucherMethods(FinanceDatabase) {
   proto.createVoucher = function (payload) {
     validateVoucher(payload);
 
+    // 号段唯一性检查：同一账套中 (voucherWord, voucherNo, period) 不可重复
+    if (this.db) {
+      this._ensureBookId();
+      const dup = this.db.prepare(
+        'SELECT id FROM gl_voucher WHERE book_id = ? AND voucher_word = ? AND voucher_no = ? AND period = ?'
+      ).get(this.currentBookId, payload.voucherWord, payload.voucherNo, payload.period || '2026-06');
+      if (dup) throw new Error(`凭证号冲突：${payload.voucherWord}字-${payload.voucherNo}号 在期间 ${payload.period || '2026-06'} 已存在`);
+    }
+
     const entries = payload.entries.map((e, i) => ({
       summary: e.summary,
       subjectCode: e.subjectCode,
@@ -222,7 +231,21 @@ function applyVoucherMethods(FinanceDatabase) {
   proto.auditVoucher = function (id) { return this._changeVoucherStatus(id, 'draft', 'audited', '仅草稿状态可审核', 'audit_voucher'); };
   proto.unauditVoucher = function (id) { return this._changeVoucherStatus(id, 'audited', 'draft', '仅已审核状态可反审核', 'unaudit_voucher'); };
   proto.postVoucher = function (id) { return this._changeVoucherStatus(id, 'audited', 'posted', '仅已审核状态可过账', 'post_voucher'); };
-  proto.unpostVoucher = function (id) { return this._changeVoucherStatus(id, 'posted', 'audited', '仅已过账状态可反过账', 'unpost_voucher'); };
+  proto.unpostVoucher = function (id) {
+    // 检查凭证所在期间是否已结账，已结账期间禁止反过账
+    if (this.db) {
+      const v = this.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
+      if (v) {
+        const periodRow = this.db.prepare(
+          'SELECT status FROM acct_period WHERE book_id = ? AND period = ?'
+        ).get(v.book_id, v.period);
+        if (periodRow && periodRow.status === 'closed') {
+          throw new Error(`期间 ${v.period} 已结账，不能反过账该期间的凭证。请先反结账后再操作`);
+        }
+      }
+    }
+    return this._changeVoucherStatus(id, 'posted', 'audited', '仅已过账状态可反过账', 'unpost_voucher');
+  };
 
   /**
    * 批量审核凭证

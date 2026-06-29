@@ -145,9 +145,24 @@ VoucherModal.vue (凭证弹窗)
     │       └── 凭证数据参与报表计算
     │
     └── 反操作（过账→反过账→反审核）
+        └── 反过账前检查期间状态，已结账则拒绝
 ```
 
-### 4.4 报表生成流程
+### 4.4 期末结账流程
+
+```
+ClosingView.vue → closePeriod(period)
+    │
+    ├── ① 期间存在性检查
+    ├── ② 前序期间强制检查（未初始化/未结账均拒绝）
+    ├── ③ 未过账凭证检查
+    ├── ④ 三层试算平衡（期初余额 + 发生额 + 期末余额）
+    ├── ⑤ 损益结转：收入/费用 → 本年利润(4103)（幂等保护）
+    ├── ⑥ 年末利润结转（12月）：本年利润(4103) → 利润分配-未分配利润(4104)
+    └── ⑦ 关闭期间 → acct_period.status = 'closed'
+```
+
+### 4.5 报表生成流程
 
 ```
 账簿报表 (LedgerView)
@@ -171,9 +186,21 @@ VoucherModal.vue (凭证弹窗)
     └── 资产负债表 (ReportsView)
         └── getBalanceSheet(period)
             └── shared/report-templates.cjs 共享公式引擎
-                ├── fillTemplateAmount() 统一计算
+                ├── fillTemplateAmount() 动态计算（按 section 分组合计）
                 ├── getTemplatesByType('balance') 获取模板行
-                └── 跨报表引用：净利润 = 利润表 row_no=32
+                └── 跨报表引用：净利润 = getProfitStatement() row_no=32
+
+### 4.6 固定资产折旧流程
+
+```
+AssetView.vue → depreciateAsset(id)
+    │
+    ├── 检查资产状态（报废/已处置/已提足折旧 → 拒绝）
+    ├── 计算剩余可折旧额度（原值 - 残值 - 累计折旧）
+    ├── 最后一期处理：剩余额度不足整月时按实际余额计提
+    └── 事务内原子操作：
+        ├── 更新 fa_asset_card（累计折旧 + 净值）
+        └── 自动生成会计凭证（借: 6602 管理费用 / 贷: 1602 累计折旧）
 ```
 
 ---
@@ -181,12 +208,16 @@ VoucherModal.vue (凭证弹窗)
 ## 5. 前端页面路由
 
 ```
-/login        → LoginView.vue      登录页（无需认证）
-/dashboard    → DashboardView.vue  工作台主页（需认证）
-/voucher      → VoucherView.vue    凭证管理（需认证）
-/ledger       → LedgerView.vue     账簿报表（需认证）
-/subjects     → AccountSubject.vue 科目管理（需认证）
-/settings     → SettingsView.vue   系统设置（需认证）
+/login        → LoginView.vue          登录页（无需认证）
+/dashboard    → DashboardView.vue      工作台主页（需认证）
+/voucher      → VoucherView.vue        凭证管理（需认证）
+/ledger       → LedgerView.vue         账簿报表（需认证）
+/reports      → ReportsView.vue        财务报表（需认证）
+/opening      → OpeningBalanceView.vue 期初余额（需认证）
+/subjects     → AccountSubject.vue     科目管理（需认证）
+/closing      → ClosingView.vue        期末结账（需认证）
+/assets       → AssetView.vue          固定资产（需认证）
+/settings     → SettingsView.vue       系统设置（需认证）
 ```
 
 ### 路由守卫

@@ -30,7 +30,8 @@ function applyPeriodMethods(FinanceDatabase) {
       const pr = this.db.prepare(
         'SELECT * FROM acct_period WHERE book_id = ? AND period = ?'
       ).get(this.currentBookId, prev);
-      if (pr && pr.status !== 'closed') {
+      if (!pr) throw new Error(`前序期间 ${prev} 未初始化，请先在系统设置中初始化该期间后再结账`);
+      if (pr.status !== 'closed') {
         throw new Error(`前一期间 ${prev} 尚未结账，请按会计期间顺序逐月结账`);
       }
     }
@@ -46,9 +47,18 @@ function applyPeriodMethods(FinanceDatabase) {
     // 强制试算平衡检查（不依赖前端开关，后端硬校验）
     const tb = this.getTrialBalance(period);
     if (!tb || !tb.totals) throw new Error('无法获取试算平衡数据，请检查科目余额');
+    // 三层平衡校验：期初余额、本期发生额、期末余额
+    const openingDiff = Math.abs((tb.totals.openingDebit || 0) - (tb.totals.openingCredit || 0));
+    if (openingDiff > 0.01) {
+      throw new Error(`期初余额不平衡（借方 ${(tb.totals.openingDebit || 0).toFixed(2)} ≠ 贷方 ${(tb.totals.openingCredit || 0).toFixed(2)}，差额 ${openingDiff.toFixed(2)}），请检查期初余额`);
+    }
+    const amountDiff = Math.abs((tb.totals.amountDebit || 0) - (tb.totals.amountCredit || 0));
+    if (amountDiff > 0.01) {
+      throw new Error(`本期发生额不平衡（借方 ${(tb.totals.amountDebit || 0).toFixed(2)} ≠ 贷方 ${(tb.totals.amountCredit || 0).toFixed(2)}，差额 ${amountDiff.toFixed(2)}），请检查凭证借贷平衡`);
+    }
     const endingDiff = Math.abs((tb.totals.endingDebit || 0) - (tb.totals.endingCredit || 0));
     if (endingDiff > 0.01) {
-      throw new Error(`试算不平衡（期末借方 ${tb.totals.endingDebit.toFixed(2)} ≠ 贷方 ${tb.totals.endingCredit.toFixed(2)}，差额 ${endingDiff.toFixed(2)}），请检查凭证后再结账`);
+      throw new Error(`期末余额不平衡（借方 ${(tb.totals.endingDebit || 0).toFixed(2)} ≠ 贷方 ${(tb.totals.endingCredit || 0).toFixed(2)}，差额 ${endingDiff.toFixed(2)}），请检查凭证后再结账`);
     }
 
     // 损益结转
@@ -100,6 +110,15 @@ function applyPeriodMethods(FinanceDatabase) {
   proto._carryForwardProfit = function (period) {
     this._ensureBookId();
     const self = this;
+
+    // 幂等检查：如果当前期间已有损益结转凭证，跳过
+    const existingCF = this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM gl_voucher WHERE book_id = ? AND period = ? AND remark LIKE '[损益结转]%' AND status = 'posted'"
+    ).get(this.currentBookId, period);
+    if (existingCF && existingCF.cnt > 0) {
+      this._log('carry_forward', `期间 ${period} 已存在 ${existingCF.cnt} 张损益结转凭证，跳过重复结转`);
+      return;
+    }
 
     const balances = this.getSubjectBalance({ period });
     const incomeCategories = ['income', 'expense'];
@@ -186,6 +205,59 @@ function applyPeriodMethods(FinanceDatabase) {
 
     const netProfit = totalIncome - totalExpense;
     this._log('carry_forward', `期间 ${period} 损益结转完成，结转 ${entries.length} 条分录，净利润 ${netProfit.toFixed(2)}`);
+
+    // 年末结转：12月份结账时，将本年利润(4103)余额结转至利润分配-未分配利润(4104)
+    if (monthNum === 12) {
+      this._carryForwardYearEndProfit(period, netProfit);
+    }
+  };
+
+  /**
+   * 年末利润结转：将本年利润(4103)余额结转至利润分配-未分配利润(4104)
+   */
+  proto._carryForwardYearEndProfit = function (period, existingNetProfit) {
+    const self = this;
+    // 获取 4103(本年利润) 和 4104(利润分配-未分配利润) 的期末余额
+    const balances = this.getSubjectBalance({ period });
+    const profit4103 = balances.find(b => b.code === '4103');
+    const totalNetProfit = profit4103 ? Math.abs(profit4103.balance) : existingNetProfit;
+    if (totalNetProfit < 0.01) {
+      this._log('year_end_transfer', '本年利润余额为0，跳过年末利润结转');
+      return;
+    }
+
+    // 幂等检查：是否已有年末利润结转凭证
+    const existing = this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM gl_voucher WHERE book_id = ? AND period = ? AND remark LIKE '[年末利润结转]%' AND status = 'posted'"
+    ).get(this.currentBookId, period);
+    if (existing && existing.cnt > 0) {
+      this._log('year_end_transfer', '已存在年末利润结转凭证，跳过');
+      return;
+    }
+
+    const defaultVw = this.db.prepare(
+      'SELECT word FROM voucher_words WHERE book_id = ? AND is_default = 1 LIMIT 1'
+    ).get(this.currentBookId);
+    const voucherWord = defaultVw?.word || '记';
+    const voucherNo = this.getNextVoucherNo(voucherWord, period);
+    const yearNum = parseInt(period.substring(0, 4));
+    const dateStr = `${yearNum}-12-31`;
+
+    const tx = this.db.transaction(() => {
+      const result = self.db.prepare(
+        "INSERT INTO gl_voucher (book_id, period, voucher_word, voucher_no, voucher_date, remark, status, maker, bookkeeper) VALUES (?, ?, ?, ?, ?, ?, 'posted', 'system', '')"
+      ).run(self.currentBookId, period, voucherWord, voucherNo, dateStr, `[年末利润结转] ${period} 本年利润结转至未分配利润`);
+
+      const insEntry = self.db.prepare(
+        'INSERT INTO gl_voucher_entry (voucher_id, summary, subject_code, subject_name, debit, credit, quantity, unit_price, unit, aux_type_id, aux_value_id, line_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      );
+      // 借：本年利润 4103
+      insEntry.run(result.lastInsertRowid, '结转本年利润', '4103', '本年利润', totalNetProfit, 0, 0, 0, '', null, null, 1);
+      // 贷：利润分配-未分配利润 4104
+      insEntry.run(result.lastInsertRowid, '结转未分配利润', '4104', '利润分配-未分配利润', 0, totalNetProfit, 0, 0, '', null, null, 2);
+    });
+    tx();
+    this._log('year_end_transfer', `年末利润结转完成，结转金额 ${totalNetProfit.toFixed(2)}（${voucherWord}字-${voucherNo}号）`);
   };
 
   /**
@@ -194,12 +266,13 @@ function applyPeriodMethods(FinanceDatabase) {
   proto._reverseCarryForward = function (period) {
     this._ensureBookId();
     const self = this;
+    // 同时清理损益结转凭证和年末利润结转凭证
     const carryVouchers = this.db.prepare(
-      "SELECT id, remark FROM gl_voucher WHERE book_id = ? AND period = ? AND remark LIKE '[损益结转]%' AND status = 'posted'"
+      "SELECT id, remark FROM gl_voucher WHERE book_id = ? AND period = ? AND (remark LIKE '[损益结转]%' OR remark LIKE '[年末利润结转]%') AND status = 'posted'"
     ).all(this.currentBookId, period);
 
     if (carryVouchers.length === 0) {
-      this._log('reverse_carry_forward', `期间 ${period} 无损益结转凭证，跳过`);
+      this._log('reverse_carry_forward', `期间 ${period} 无结转凭证，跳过`);
       return;
     }
 

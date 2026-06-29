@@ -107,37 +107,56 @@ function fillTemplateAmount(templateRows, balanceMap, openingMap, monthlyMap, op
     });
   }
 
-  // 资产负债表公式
-  const asRow = rowMap.get(21); // 固定资产账面价值 = 固定资产原价 - 累计折旧
+  // 资产负债表公式（动态计算，基于模板行 section 分组，不再硬编码行号）
+  // 固定资产账面价值 = 固定资产原价 - 累计折旧 (row_no=19,20 → 21)
+  const asRow = rowMap.get(21);
   if (asRow) asRow.amount = (rowMap.get(19)?.amount || 0) - (rowMap.get(20)?.amount || 0);
 
-  const caTotal = rowMap.get(15); // 流动资产合计
-  if (caTotal) caTotal.amount = [2,3,4,5,6,7,8,9,10].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-  const ncaTotal = rowMap.get(29); // 非流动资产合计
-  if (ncaTotal) ncaTotal.amount = [17,18,21,22,23,24,25,26,27,28].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-  const atTotal = rowMap.get(30); // 资产总计
-  if (atTotal) atTotal.amount = (caTotal?.amount || 0) + (ncaTotal?.amount || 0);
-
-  const clTotal = rowMap.get(41); // 流动负债合计
-  if (clTotal) clTotal.amount = [32,33,34,35,36,37,38,39,40].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-  const nclTotal = rowMap.get(46); // 非流动负债合计
-  if (nclTotal) nclTotal.amount = [42,43,44].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-
-  const liabTotal = rowMap.get(47); // 负债合计
-  if (liabTotal) liabTotal.amount = (clTotal?.amount || 0) + (nclTotal?.amount || 0);
-
-  const eqTotal = rowMap.get(53); // 所有者权益合计
-  if (eqTotal) {
-    eqTotal.amount = [49,50,51,52].reduce((s, r) => s + (rowMap.get(r)?.amount || 0), 0);
-    // 加上净利润（来自利润表或外部传入）
-    eqTotal.amount += netProfitAmount || (netProfitRow?.amount || 0);
+  // 按 section 分组，找出每组的合计行和非合计行，动态求和
+  const sections = {};
+  for (const row of allRows) {
+    const sec = row.section;
+    if (!sec) continue;
+    if (!sections[sec]) sections[sec] = { totals: [], items: [] };
+    if (row.is_total) {
+      sections[sec].totals.push(row);
+      // 记录合计行需要包含的项目行号范围（在合计行之前、前一个合计行之后的同section行）
+      const prevTotal = sections[sec].totals.length > 1 ? sections[sec].totals[sections[sec].totals.length - 2] : null;
+      row._sumRange = { start: prevTotal ? prevTotal.row_no + 1 : 0, end: row.row_no - 1 };
+    }
   }
 
-  const totalRow = rowMap.get(54); // 负债和所有者权益总计
-  if (totalRow) totalRow.amount = (liabTotal?.amount || 0) + (eqTotal?.amount || 0);
+  // 动态计算各合计行金额
+  for (const [, sgroup] of Object.entries(sections)) {
+    for (const total of sgroup.totals) {
+      if (!total._sumRange) continue;
+      let sum = 0;
+      for (const row of allRows) {
+        if (row.section !== total.section) continue;
+        if (row.is_header || row.is_total) continue;
+        if (row.row_no >= total._sumRange.start && row.row_no <= total._sumRange.end) {
+          sum += row.amount || 0;
+        }
+      }
+      // 固定资产账面价值已被特殊处理(row_no=21)，跳过其动态计算
+      if (total.row_no !== 21) {
+        total.amount = Math.abs(sum) > 0.001 ? sum : total.amount;
+      }
+
+      // 所有者权益合计需加上净利润
+      if (total.row_no === 53) {
+        total.amount += netProfitAmount || (netProfitRow?.amount || 0);
+      }
+    }
+  }
+
+  // 资产总计 = 流动资产合计 + 非流动资产合计
+  const atTotal = rowMap.get(30);
+  if (atTotal) atTotal.amount = (rowMap.get(15)?.amount || 0) + (rowMap.get(29)?.amount || 0);
+
+  // 负债和所有者权益总计 = 负债合计 + 所有者权益合计
+  const totalRow = rowMap.get(54);
+  if (totalRow) totalRow.amount = (rowMap.get(47)?.amount || 0) + (rowMap.get(53)?.amount || 0);
 
   return allRows;
 }

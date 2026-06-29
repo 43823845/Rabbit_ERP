@@ -113,7 +113,7 @@ function applyAssetMethods(FinanceDatabase) {
     this._log('delete_asset', `删除固定资产「${existing.asset_name}」`);
   };
 
-  /** 计提单张卡片的折旧（增加累计折旧，减少净值） */
+  /** 计提单张卡片的折旧（增加累计折旧，减少净值，并自动生成折旧凭证） */
   proto.depreciateAsset = function (id, periods = 1) {
     this._ensureBookId();
     const card = this.db.prepare('SELECT * FROM fa_asset_card WHERE id = ? AND book_id = ?').get(id, this.currentBookId);
@@ -126,24 +126,62 @@ function applyAssetMethods(FinanceDatabase) {
     const maxDepreciable = card.original_value - residual;
     const remainingDepreciable = Math.max(0, maxDepreciable - card.accumulated_depreciation);
     const maxPeriods = card.monthly_depreciation > 0 ? Math.floor(remainingDepreciable / card.monthly_depreciation) : 0;
-    const effectivePeriods = Math.min(periods, maxPeriods);
-    if (effectivePeriods <= 0) throw new Error('该资产可计提折旧额度已用完');
+    let effectivePeriods = Math.min(periods, maxPeriods);
 
-    const addDep = Math.round((card.monthly_depreciation * effectivePeriods) * 100) / 100;
+    // 处理最后一期折旧：剩余额度不足一个完整月但仍有余额时，计提剩余额度
+    let addDep;
+    if (effectivePeriods === 0 && remainingDepreciable > 0 && remainingDepreciable < card.monthly_depreciation) {
+      addDep = Math.round(remainingDepreciable * 100) / 100;
+    } else if (effectivePeriods <= 0) {
+      throw new Error('该资产可计提折旧额度已用完');
+    } else {
+      addDep = Math.round((card.monthly_depreciation * effectivePeriods) * 100) / 100;
+    }
+
     const newAccDep = Math.round((card.accumulated_depreciation + addDep) * 100) / 100;
     const newNetValue = Math.round((card.original_value - newAccDep) * 100) / 100;
 
     // 净值不能为负
-    const finalStatus = newNetValue <= 0 ? '已提足折旧' : card.status;
-    const finalNetValue = Math.max(0, newNetValue);
-    const finalAccDep = Math.min(card.original_value, newAccDep);
+    const finalStatus = newNetValue <= residual ? '已提足折旧' : card.status;
+    const finalNetValue = Math.max(residual, newNetValue);
+    const finalAccDep = Math.min(card.original_value - residual, newAccDep);
 
-    this.db.prepare(
-      `UPDATE fa_asset_card SET accumulated_depreciation = ?, net_value = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND book_id = ?`
-    ).run(finalAccDep, finalNetValue, finalStatus, id, this.currentBookId);
+    const self = this;
+    let generatedVoucherNo = 0;
+    this.db.transaction(() => {
+      self.db.prepare(
+        `UPDATE fa_asset_card SET accumulated_depreciation = ?, net_value = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND book_id = ?`
+      ).run(finalAccDep, finalNetValue, finalStatus, id, self.currentBookId);
 
-    this._log('depreciate_asset', `计提「${card.asset_name}」${periods}期折旧 ${addDep.toFixed(2)}，累计 ${finalAccDep.toFixed(2)}`);
+      // 自动生成折旧会计凭证（借：管理费用 6602 / 贷：累计折旧 1602）
+      const period = self._getCurrentPeriod();
+      const nextNo = self.getNextVoucherNo({ voucherWord: '记', period });
+      generatedVoucherNo = nextNo;
+      const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const voucherResult = self.db.prepare(
+        `INSERT INTO gl_voucher (book_id, period, voucher_word, voucher_no, voucher_date, remark, status, maker, created_at)
+         VALUES (?, ?, '记', ?, ?, '计提折旧：' || ?, 'posted', 'system', ?)`
+      ).run(self.currentBookId, period, nextNo, period + '-01', card.asset_name, now);
+      const voucherId = voucherResult.lastInsertRowid;
+
+      self.db.prepare(
+        `INSERT INTO gl_voucher_entry (voucher_id, summary, subject_code, subject_name, debit, credit, line_no)
+         VALUES (?, '计提折旧', '6602', '管理费用', ?, 0, 1)`
+      ).run(voucherId, addDep);
+      self.db.prepare(
+        `INSERT INTO gl_voucher_entry (voucher_id, summary, subject_code, subject_name, debit, credit, line_no)
+         VALUES (?, '累计折旧', '1602', '累计折旧', 0, ?, 2)`
+      ).run(voucherId, addDep);
+    })();
+
+    this._log('depreciate_asset', `计提「${card.asset_name}」折旧 ${addDep.toFixed(2)}（自动生成记字-${generatedVoucherNo}号凭证），累计 ${finalAccDep.toFixed(2)}`);
     return { addedDepreciation: addDep, accumulatedDepreciation: finalAccDep, netValue: finalNetValue, status: finalStatus };
+  };
+
+  /** 获取当前账套期间 */
+  proto._getCurrentPeriod = function () {
+    const book = this.db.prepare('SELECT current_period FROM acct_book WHERE id = ?').get(this.currentBookId);
+    return book?.current_period || '2026-06';
   };
 
   /** 汇总统计 */

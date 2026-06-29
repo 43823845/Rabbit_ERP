@@ -139,8 +139,9 @@ function onPeriodChange() {
 function onRefresh() { loadData(); }
 
 function formatMoney(val: number): string {
-  if (val === null || val === undefined || Math.abs(val) < 0.001) return '';
-  return val.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (val === null || val === undefined) return '';
+  const v = val || 0;
+  return v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // 资产负债表日期：取选定月份的最后一天

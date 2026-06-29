@@ -272,9 +272,13 @@ function applyReportMethods(FinanceDatabase) {
     let netProfit = 0;
     try {
       const ps = this.getProfitStatement(cp);
+      if (!ps || !ps.rows) throw new Error('利润表数据为空');
       const npRow = ps.rows.find(r => r.row_no === 32);
-      if (npRow) netProfit = npRow.amount;
-    } catch (_) {}
+      if (!npRow) throw new Error('利润表中未找到净利润行(row_no=32)');
+      netProfit = npRow.amount;
+    } catch (e) {
+      throw new Error(`资产负债表计算失败：无法获取当期净利润（${e.message}），请先生成利润表`);
+    }
 
     const allRows = this._fillTemplateAmount(templateRows, balMap, opMap, null, { netProfitAmount: netProfit });
     return {
