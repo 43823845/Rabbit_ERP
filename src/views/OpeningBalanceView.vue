@@ -6,7 +6,7 @@
  */
 import { onMounted, ref, computed } from 'vue';
 import { ElMessage } from 'element-plus';
-import { QuestionFilled, CircleCheckFilled, CircleCloseFilled, List } from '@element-plus/icons-vue';
+import { QuestionFilled, CircleCheckFilled, CircleCloseFilled, List, Upload, Download } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import type { FinanceSubject, OpeningBalance, FinanceVoucher } from '../api';
 
@@ -265,6 +265,80 @@ function getSummaries(param: any) {
 }
 
 onMounted(loadData);
+
+/* ===== 导出期初余额为 CSV ===== */
+function handleExport() {
+  const rows: string[] = [];
+  // BOM + 表头
+  rows.push('\uFEFF科目编码,科目名称,类别,方向,年初余额');
+  editableSubjects.value.forEach(s => {
+    const balance = (editMap.value[s.code]?.balance || 0).toFixed(2);
+    const cat = categoryLabel(s.category);
+    const dir = directionLabel(s.direction);
+    rows.push(`${s.code},${s.name},${cat},${dir},${balance}`);
+  });
+  const csv = rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `期初余额_${selectedYear.value}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  ElMessage.success('期初余额导出成功');
+}
+
+/* ===== 导入期初余额 CSV ===== */
+const importFileInput = ref<HTMLInputElement | null>(null);
+
+function triggerImport() {
+  importFileInput.value?.click();
+}
+
+async function handleImportFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { ElMessage.warning('CSV 文件无有效数据'); return; }
+    // 跳过表头
+    const dataLines = lines[0].includes('科目编码') ? lines.slice(1) : lines;
+    let updated = 0;
+    let skipped = 0;
+    for (const line of dataLines) {
+      const cols = parseCSVLine(line);
+      if (cols.length < 5) { skipped++; continue; }
+      const code = cols[0].trim();
+      const balance = parseFloat(cols[4]) || 0;
+      const s = editableSubjects.value.find(x => x.code === code);
+      if (!s) { skipped++; continue; }
+      if (!editMap.value[code]) editMap.value[code] = { balance: 0 };
+      editMap.value[code].balance = Math.round(balance * 100) / 100;
+      updated++;
+    }
+    await saveAll();
+    ElMessage.success(`导入完成：更新 ${updated} 条，跳过 ${skipped} 条`);
+  } catch (e: any) {
+    ElMessage.error('导入失败：' + (e.message || '文件格式错误'));
+  } finally {
+    input.value = ''; // 允许重复导入同一文件
+  }
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (const ch of line) {
+    if (ch === '"') { inQuotes = !inQuotes; }
+    else if (ch === ',' && !inQuotes) { result.push(current); current = ''; }
+    else { current += ch; }
+  }
+  result.push(current);
+  return result;
+}
 </script>
 
 <template>
@@ -283,6 +357,9 @@ onMounted(loadData);
           </el-select>
         </div>
         <el-button @click="openTrialBalance"><el-icon><List /></el-icon>试算平衡</el-button>
+        <el-button @click="handleExport"><el-icon><Download /></el-icon>导出</el-button>
+        <el-button @click="triggerImport"><el-icon><Upload /></el-icon>导入</el-button>
+        <input ref="importFileInput" type="file" accept=".csv" style="display:none" @change="handleImportFile" />
         <el-button type="primary" @click="handleSave" :loading="saving">保存</el-button>
       </div>
     </div>

@@ -2,7 +2,7 @@
 // ponytail: 记账凭证管理页面 — 列表/审核/过账/打印/断号/导出
 import { computed, onMounted, ref, shallowRef } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Plus, Refresh, TrendCharts, Printer, View, Download } from '@element-plus/icons-vue';
+import { Plus, Refresh, TrendCharts, Printer, View, Download, Search } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import VoucherModal from '../components/VoucherModal.vue';
 import VoucherListTable from '../components/VoucherListTable.vue';
@@ -20,6 +20,18 @@ const viewingVoucher = ref<FinanceVoucher | null>(null);
 const selectedVouchers = ref<FinanceVoucher[]>([]);
 const selectedVoucherIds = computed(() => new Set(selectedVouchers.value.map(v => v.id)));
 const exporting = ref(false);
+const searchQuery = ref('');
+
+/* 按关键字过滤凭证：摘要/凭证字/编号 */
+const filteredVouchers = computed(() => {
+  if (!searchQuery.value.trim()) return vouchers.value;
+  const q = searchQuery.value.trim().toLowerCase();
+  return vouchers.value.filter(v =>
+    v.remark?.toLowerCase().includes(q) ||
+    v.voucher_word?.toLowerCase().includes(q) ||
+    String(v.voucher_no).includes(q)
+  );
+});
 
 async function refresh() { loading.value = true; try { vouchers.value = await api.listVouchers(); } finally { loading.value = false; } }
 
@@ -168,6 +180,23 @@ async function handleBatchPost() {
     refresh();
   } catch { /* 取消 */ }
 }
+
+async function handleBatchDelete() {
+  const draftIds = selectedVouchers.value.filter(v => v.status === 'draft').map(v => v.id);
+  if (draftIds.length === 0) { ElMessage.warning('选中的凭证中没有草稿状态，无法批量删除'); return; }
+  try {
+    await ElMessageBox.confirm(`确定批量删除 ${draftIds.length} 张草稿凭证？此操作不可恢复！`, '批量删除', {
+      confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'error',
+    });
+    let success = 0, failed = 0;
+    for (const id of draftIds) {
+      try { await api.deleteVoucher(id); success++; } catch { failed++; }
+    }
+    if (success > 0) ElMessage.success(`批量删除完成：成功 ${success} 张${failed > 0 ? `，${failed} 张失败` : ''}`);
+    else ElMessage.warning('批量删除全部失败');
+    refresh();
+  } catch { /* 取消 */ }
+}
 </script>
 
 <template>
@@ -178,23 +207,43 @@ async function handleBatchPost() {
         <p class="ph-desc">管理所有记账凭证，支持审核、过账、查看、整理断号</p>
       </div>
       <div style="display:flex;gap:8px">
-        <el-button @click="handleReorder"><el-icon><TrendCharts /></el-icon>整理断号</el-button>
+        <!-- 主操作：新增 -->
+        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增凭证</el-button>
+        <!-- 工作流：审核 → 过账 -->
         <el-button type="warning" :disabled="!selectedVouchers.some(v=>v.status==='draft')" @click="handleBatchAudit">
           <el-icon><TrendCharts /></el-icon>批量审核{{ selectedVouchers.filter(v=>v.status==='draft').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='draft').length})` : '' }}
         </el-button>
         <el-button type="primary" :disabled="!selectedVouchers.some(v=>v.status==='audited')" @click="handleBatchPost">
           批量过账{{ selectedVouchers.filter(v=>v.status==='audited').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='audited').length})` : '' }}
         </el-button>
+        <!-- 批量操作：删除 -->
+        <el-button type="danger" plain :disabled="!selectedVouchers.some(v=>v.status==='draft')" @click="handleBatchDelete">
+          批量删除{{ selectedVouchers.filter(v=>v.status==='draft').length > 0 ? `(${selectedVouchers.filter(v=>v.status==='draft').length})` : '' }}
+        </el-button>
+        <!-- 工具：导出 -->
         <el-button type="success" :loading="exporting" :disabled="selectedVouchers.length === 0" @click="handleExport">
           <el-icon><Download /></el-icon>导出PNG{{ selectedVouchers.length > 0 ? `(${selectedVouchers.length})` : '' }}
         </el-button>
-        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增凭证</el-button>
+        <!-- 维护 -->
+        <el-button @click="handleReorder"><el-icon><TrendCharts /></el-icon>整理断号</el-button>
         <el-button :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon></el-button>
       </div>
     </div>
 
+    <!-- 搜索过滤栏 -->
+    <div class="vch-search-bar">
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索凭证…（摘要 / 凭证字 / 编号）"
+        clearable
+        size="small"
+        style="width:320px"
+        :prefix-icon="Search"
+      />
+    </div>
+
     <div class="panel">
-      <VoucherListTable :data="vouchers" :loading="loading" :show-selection="true" :show-amounts="true" :selected-ids="selectedVoucherIds" @selection-change="onSelectionChange">
+      <VoucherListTable :data="filteredVouchers" :loading="loading" :show-selection="true" :show-amounts="true" :selected-ids="selectedVoucherIds" @selection-change="onSelectionChange">
         <template #suffix-columns>
           <el-table-column label="操作" width="250">
             <template #default="{ row }">
@@ -268,6 +317,11 @@ async function handleBatchPost() {
   padding: 0;
   box-shadow: 0 1px 3px rgba(10, 30, 61, 0.04);
   overflow: hidden;
+}
+
+.vch-search-bar {
+  display: flex; align-items: center;
+  padding: 8px 0;
 }
 
 /* 内部表格适配 — 蓝灰色系，与整体设计统一 */

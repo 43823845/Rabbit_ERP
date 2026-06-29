@@ -225,6 +225,27 @@ const DDL = `
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (book_id) REFERENCES acct_book(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS fa_asset_card (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL,
+    asset_code TEXT NOT NULL DEFAULT '',
+    asset_name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '办公设备',
+    buy_date TEXT NOT NULL DEFAULT '',
+    original_value REAL NOT NULL DEFAULT 0,
+    residual_rate REAL NOT NULL DEFAULT 0.05,
+    useful_life_years INTEGER NOT NULL DEFAULT 5,
+    monthly_depreciation REAL NOT NULL DEFAULT 0,
+    accumulated_depreciation REAL NOT NULL DEFAULT 0,
+    net_value REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT '在用' CHECK(status IN ('在用','已提足折旧','报废','已处置')),
+    department TEXT NOT NULL DEFAULT '',
+    remark TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_id) REFERENCES acct_book(id) ON DELETE CASCADE
+  );
 `;
 
 /** 索引创建语句 */
@@ -244,6 +265,8 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_opening_book_period ON gl_opening_balance(book_id, period)',
   'CREATE INDEX IF NOT EXISTS idx_period_book ON acct_period(book_id, period)',
   'CREATE INDEX IF NOT EXISTS idx_log_action_time ON sys_operation_log(action, created_at)',
+  'CREATE INDEX IF NOT EXISTS idx_asset_book ON fa_asset_card(book_id)',
+  'CREATE INDEX IF NOT EXISTS idx_asset_book_status ON fa_asset_card(book_id, status)',
 ];
 
 // REPORT_TEMPLATES 已移至 ../../shared/report-templates.cjs（共享数据源）

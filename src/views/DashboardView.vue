@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// ponytail: 工作台 — 凭证搜索/统计/增改查/高亮定位
-import { nextTick, onMounted, reactive, ref } from 'vue';
+// ponytail: 工作台 — 财务快览 + 资金余额 + 凭证搜索/统计/增改查/高亮定位
+import { nextTick, onMounted, reactive, ref, shallowRef } from 'vue';
 import {
   Document, Checked, CircleCheck,
   Search, Delete, View, Plus,
-  ArrowDown, ArrowUp,
+  ArrowDown, ArrowUp, Wallet, Coin, Money,
+  CreditCard, TrendCharts,
 } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FinanceSubject, FinanceVoucher, VoucherFilter } from '../api';
@@ -32,10 +33,88 @@ const activeCard = ref<string | null>(null);
 const voucherModal = reactive({ open: false, voucher: null as FinanceVoucher | null });
 const showAdvanced = ref(false);
 
+// ===== 资金与关键科目余额 =====
+interface BalanceCard {
+  code: string; name: string; balance: number; icon: any; color: string; bg: string;
+}
+const balanceCards = shallowRef<BalanceCard[]>([]);
+const currentPeriod = ref('');
+
+async function refreshBalances() {
+  try {
+    const period = currentPeriod.value || filter.period;
+    if (!period) return;
+    const balances = await api.getSubjectBalance({ period });
+    const balMap = new Map(balances.map(b => [b.code, b]));
+    const subMap = new Map(subjects.value.map(s => [s.code, s]));
+
+    const cards: BalanceCard[] = [];
+
+    // 现金类科目（isCash=1 或 code 以 1001 开头）
+    const cashSubjects = subjects.value.filter(s => s.isCash || s.code.startsWith('1001'));
+    for (const s of cashSubjects.slice(0, 2)) {
+      const b = balMap.get(s.code);
+      cards.push({
+        code: s.code, name: s.name,
+        balance: b?.balance ?? 0,
+        icon: s.code.startsWith('1001') ? Coin : Wallet,
+        color: '#f59e0b', bg: '#fffbe6',
+      });
+    }
+
+    // 银行存款（1002 开头）
+    const bankSubjects = subjects.value.filter(s => s.code.startsWith('1002'));
+    for (const s of bankSubjects.slice(0, 2)) {
+      const b = balMap.get(s.code);
+      cards.push({
+        code: s.code, name: s.name,
+        balance: b?.balance ?? 0,
+        icon: CreditCard,
+        color: '#1677ff', bg: '#e6f4ff',
+      });
+    }
+
+    // 应收账款（1122/1131 开头）
+    const arSubjects = subjects.value.filter(s => s.code.startsWith('1122') || s.code.startsWith('1131'));
+    for (const s of arSubjects.slice(0, 1)) {
+      const b = balMap.get(s.code);
+      cards.push({
+        code: s.code, name: s.name,
+        balance: b?.balance ?? 0,
+        icon: Money,
+        color: '#389e3d', bg: '#f6ffed',
+      });
+    }
+
+    // 应付账款（2202 开头）
+    const apSubjects = subjects.value.filter(s => s.code.startsWith('2202'));
+    for (const s of apSubjects.slice(0, 1)) {
+      const b = balMap.get(s.code);
+      cards.push({
+        code: s.code, name: s.name,
+        balance: b?.balance ?? 0,
+        icon: TrendCharts,
+        color: '#cf1322', bg: '#fff1f0',
+      });
+    }
+
+    balanceCards.value = cards;
+  } catch { /* 余额获取失败时静默处理 */ }
+}
+
+function formatBalance(balance: number): string {
+  const abs = Math.abs(balance);
+  if (abs < 0.005) return '¥0.00';
+  const sign = balance < 0 ? '-' : '';
+  return sign + '¥' + abs.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 onMounted(async () => {
   const data = await api.bootstrap();
   filter.period = data.book.current_period;
+  currentPeriod.value = data.book.current_period;
   subjects.value = data.subjects;
+  await refreshBalances();
   await refreshStats();
   await doSearch();
 });
@@ -112,17 +191,17 @@ function openVoucher(v: FinanceVoucher) { voucherModal.voucher = v; voucherModal
 function newVoucher() { voucherModal.voucher = null; voucherModal.open = true; }
 
 async function handleSaved() {
-  await refreshStats(); await doSearch();
+  await refreshBalances(); await refreshStats(); await doSearch();
 }
 
-async function handleDeleted() { voucherModal.open = false; await refreshStats(); await doSearch(); }
+async function handleDeleted() { voucherModal.open = false; await refreshBalances(); await refreshStats(); await doSearch(); }
 
 async function doAudit(v: FinanceVoucher) {
   if (v.status !== 'draft') { ElMessage.warning('仅草稿状态的凭证可审核'); return; }
   await ElMessageBox.confirm(`确定要审核凭证 ${v.voucher_word}-${v.voucher_no} 号吗？`, '确认审核', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' });
   await api.auditVoucher(v.id);
   ElMessage.success('审核成功');
-  await refreshStats(); await doSearch();
+  await refreshBalances(); await refreshStats(); await doSearch();
 }
 
 async function doPost(v: FinanceVoucher) {
@@ -130,14 +209,14 @@ async function doPost(v: FinanceVoucher) {
   await ElMessageBox.confirm(`确定要过账凭证 ${v.voucher_word}-${v.voucher_no} 号吗？过账后不可直接修改。`, '确认过账', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' });
   await api.postVoucher(v.id);
   ElMessage.success('过账成功');
-  await refreshStats(); await doSearch();
+  await refreshBalances(); await refreshStats(); await doSearch();
 }
 
 async function doDelete(v: FinanceVoucher) {
   await ElMessageBox.confirm(`确定要删除凭证 ${v.voucher_word}-${v.voucher_no} 号吗？此操作不可撤销。`, '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'error' });
   await api.deleteVoucher(v.id);
   ElMessage.success('删除成功');
-  await refreshStats(); await doSearch();
+  await refreshBalances(); await refreshStats(); await doSearch();
 }
 </script>
 
@@ -164,6 +243,28 @@ async function doDelete(v: FinanceVoucher) {
         <div class="stat-card__icon" style="background:#f6ffed;color:#389e3d"><el-icon size="22"><CircleCheck /></el-icon></div>
         <div class="stat-card__info"><span class="stat-card__value">{{ posted }}</span><span class="stat-card__label">已过账</span></div>
         <div class="stat-card__bar" style="background:#52c41a"></div>
+      </div>
+    </div>
+
+    <!-- 资金与关键科目余额 -->
+    <div class="balance-section" v-if="balanceCards.length > 0">
+      <div class="balance-grid">
+        <div
+          v-for="card in balanceCards"
+          :key="card.code"
+          class="balance-card"
+          :title="`${card.code} ${card.name}`"
+        >
+          <div class="bal-icon" :style="{ background: card.bg, color: card.color }">
+            <el-icon :size="18"><component :is="card.icon" /></el-icon>
+          </div>
+          <div class="bal-info">
+            <span class="bal-name">{{ card.name }}</span>
+            <span class="bal-value" :style="{ color: card.balance < 0 ? '#ef4444' : card.color }">
+              {{ formatBalance(card.balance) }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -319,6 +420,51 @@ async function doDelete(v: FinanceVoucher) {
 
 .stat-card__label {
   font-size: 12px; color: var(--epp-ink-sub); letter-spacing: 0.5px;
+}
+
+/* ---- 资金余额卡片 ---- */
+.balance-section { margin-bottom: 0; }
+
+.balance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.balance-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  background: var(--epp-paper);
+  border: 1px solid var(--epp-line-light);
+  border-radius: 4px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.balance-card:hover {
+  border-color: var(--epp-line);
+  box-shadow: 0 2px 8px rgba(10, 30, 61, 0.06);
+}
+
+.bal-icon {
+  width: 38px; height: 38px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.bal-info {
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 0;
+}
+
+.bal-name {
+  font-size: 12px; color: var(--epp-ink-sub);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.bal-value {
+  font-size: 17px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---- 内容面板 ---- */

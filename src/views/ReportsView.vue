@@ -432,15 +432,16 @@ function printReport() {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button size="small">自定义报表</el-button>
-        <el-button size="small">分享</el-button>
-        <el-dropdown>
+        <!-- TODO: 以下功能暂未实现，后续迭代 -->
+        <!-- <el-button size="small">自定义报表</el-button> -->
+        <!-- <el-button size="small">分享</el-button> -->
+        <!-- <el-dropdown>
           <el-button size="small">
             切换报表样式 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
-        </el-dropdown>
-        <el-button type="primary" size="small">报表重分类</el-button>
-        <el-button size="small">重算</el-button>
+        </el-dropdown> -->
+        <!-- <el-button type="primary" size="small">报表重分类</el-button> -->
+        <!-- <el-button size="small">重算</el-button> -->
       </div>
     </div>
 

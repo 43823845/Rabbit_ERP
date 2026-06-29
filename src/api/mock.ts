@@ -151,7 +151,9 @@ interface Store {
   multiColumnSchemes: MultiColumnScheme[];
   voucherWords: VoucherWordType[];
   opLogs: { id: number; userId: number; username: string; action: string; target: string; detail: string; createdAt: string }[];
-  voucherTemplates: { id: number; name: string; entries: string; shareType: string; createdAt: string }[];
+  voucherTemplates: { id: number; name: string; entries: Array<{ summary: string; subjectCode: string; subjectName: string }>; shareType: 'personal' | 'shared'; createdAt: string }[];
+
+
   voucherSummaries: { id: number; text: string; category: string; createdAt: string }[];
 }
 
@@ -159,7 +161,123 @@ export class MockFinanceApi implements FinanceApi {
   private companyId: string | null = null;
   private store!: Store;
 
+  /* ---- 固定资产卡片 Mock ---- */
+  private _assetKey() { return `finance_assets_${this.companyId}`; }
+  private _loadAssets(): import('../vite-env').AssetCard[] {
+    try { return JSON.parse(localStorage.getItem(this._assetKey()) || '[]'); }
+    catch { return []; }
+  }
+  private _saveAssets(list: import('../vite-env').AssetCard[]) {
+    localStorage.setItem(this._assetKey(), JSON.stringify(list));
+  }
+
+  async listAssetCards(filter?: { status?: string; category?: string }): Promise<import('../vite-env').AssetCard[]> {
+    let list = this._loadAssets();
+    if (filter?.status) list = list.filter(a => a.status === filter.status);
+    if (filter?.category) list = list.filter(a => a.category === filter.category);
+    return list.sort((a, b) => b.id - a.id);
+  }
+
+  async getAssetCard(id: number): Promise<import('../vite-env').AssetCard> {
+    const a = this._loadAssets().find(x => x.id === id);
+    if (!a) throw new Error('资产卡片不存在');
+    return a;
+  }
+
+  async createAssetCard(payload: import('../vite-env').AssetCardPayload): Promise<import('../vite-env').AssetCard> {
+    const list = this._loadAssets();
+    const id = list.length > 0 ? Math.max(...list.map(a => a.id)) + 1 : 1;
+    const months = payload.usefulLifeYears * 12;
+    const monthlyDep = Math.round((payload.originalValue * (1 - payload.residualRate) / months) * 100) / 100;
+    const now = new Date().toISOString();
+    const card: import('../vite-env').AssetCard = {
+      id, book_id: 1,
+      asset_code: payload.assetCode || '',
+      asset_name: payload.assetName || '',
+      category: payload.category || '办公设备',
+      buy_date: payload.buyDate || '',
+      original_value: payload.originalValue || 0,
+      residual_rate: payload.residualRate ?? 0.05,
+      useful_life_years: payload.usefulLifeYears || 5,
+      monthly_depreciation: monthlyDep,
+      accumulated_depreciation: 0,
+      net_value: payload.originalValue || 0,
+      status: payload.status || '在用',
+      department: payload.department || '',
+      remark: payload.remark || '',
+      created_at: now,
+      updated_at: now,
+    };
+    list.push(card);
+    this._saveAssets(list);
+    return card;
+  }
+
+  async updateAssetCard(id: number, payload: import('../vite-env').AssetCardPayload): Promise<import('../vite-env').AssetCard> {
+    const list = this._loadAssets();
+    const idx = list.findIndex(a => a.id === id);
+    if (idx < 0) throw new Error('资产卡片不存在');
+    const months = payload.usefulLifeYears * 12;
+    const monthlyDep = Math.round((payload.originalValue * (1 - payload.residualRate) / months) * 100) / 100;
+    const accDep = list[idx].accumulated_depreciation;
+    list[idx] = {
+      ...list[idx],
+      asset_code: payload.assetCode || list[idx].asset_code,
+      asset_name: payload.assetName || list[idx].asset_name,
+      category: payload.category || list[idx].category,
+      buy_date: payload.buyDate || list[idx].buy_date,
+      original_value: payload.originalValue ?? list[idx].original_value,
+      residual_rate: payload.residualRate ?? list[idx].residual_rate,
+      useful_life_years: payload.usefulLifeYears ?? list[idx].useful_life_years,
+      monthly_depreciation: monthlyDep,
+      net_value: (payload.originalValue ?? list[idx].original_value) - accDep,
+      status: payload.status || list[idx].status,
+      department: payload.department ?? list[idx].department,
+      remark: payload.remark ?? list[idx].remark,
+      updated_at: new Date().toISOString(),
+    };
+    this._saveAssets(list);
+    return list[idx];
+  }
+
+  async deleteAssetCard(id: number): Promise<void> {
+    const list = this._loadAssets();
+    this._saveAssets(list.filter(a => a.id !== id));
+  }
+
+  async depreciateAsset(id: number, periods: number): Promise<{ accumulatedDepreciation: number; netValue: number; addedDepreciation: number }> {
+    const list = this._loadAssets();
+    const idx = list.findIndex(a => a.id === id);
+    if (idx < 0) throw new Error('资产卡片不存在');
+    const card = list[idx];
+    if (card.status !== '在用') throw new Error('仅在用状态的资产可计提折旧');
+    const added = Math.round((card.monthly_depreciation * periods) * 100) / 100;
+    const newAcc = card.accumulated_depreciation + added;
+    const net = card.original_value - newAcc;
+    const willFully = newAcc >= card.original_value * (1 - card.residual_rate);
+    list[idx] = {
+      ...card,
+      accumulated_depreciation: willFully ? Math.round(card.original_value * (1 - card.residual_rate) * 100) / 100 : newAcc,
+      net_value: willFully ? Math.round(card.original_value * card.residual_rate * 100) / 100 : net,
+      status: willFully ? '已提足折旧' : card.status,
+      updated_at: new Date().toISOString(),
+    };
+    this._saveAssets(list);
+    return { accumulatedDepreciation: list[idx].accumulated_depreciation, netValue: list[idx].net_value, addedDepreciation: added, status: list[idx].status };
+  }
+
+  async getAssetStats(): Promise<import('../vite-env').AssetStats> {
+    const list = this._loadAssets();
+    return {
+      totalOriginal: Math.round(list.reduce((s, a) => s + a.original_value, 0) * 100) / 100,
+      totalDep: Math.round(list.reduce((s, a) => s + a.accumulated_depreciation, 0) * 100) / 100,
+      totalNet: Math.round(list.reduce((s, a) => s + a.net_value, 0) * 100) / 100,
+      cnt: list.length,
+    };
+  }
+
   constructor() {
+
     const last = localStorage.getItem('finance_last_company');
     if (last) {
       try {

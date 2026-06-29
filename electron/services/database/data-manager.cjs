@@ -68,6 +68,65 @@ function applyDataManagerMethods(FinanceDatabase) {
   };
 
   /**
+   * 退出时自动备份到程序安装目录下的 bak/ 目录
+   * - 路径：{appPath}/bak/Rabbit_ERP_YYYY-MM-DD_HHmmss.db
+   * - 自动清理 7 天前的旧备份
+   * - 备份失败不影响退出流程
+   */
+  proto.autoBackup = function () {
+    if (!this.db) return { success: false, reason: '数据库未初始化' };
+    try {
+      // 确定备份目录：安装目录/bak
+      const appPath = this.app.isPackaged
+        ? path.dirname(this.app.getPath('exe'))
+        : this.app.getAppPath();
+      const bakDir = path.join(appPath, 'bak');
+      if (!fs.existsSync(bakDir)) fs.mkdirSync(bakDir, { recursive: true });
+
+      // WAL checkpoint 确保数据完整写入
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+
+      // 生成时间戳文件名
+      const now = new Date();
+      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+      const destPath = path.join(bakDir, `Rabbit_ERP_${ts}.bak`);
+
+      // 执行备份
+      const srcPath = path.join(this.app.getPath('userData'), 'Rabbit_ERP.db');
+      fs.copyFileSync(srcPath, destPath);
+
+      // 清理 7 天前的旧备份
+      this._cleanOldBackups(bakDir, 7);
+
+      console.log(`[autoBackup] 已备份至 ${destPath}`);
+      return { success: true, path: destPath };
+    } catch (err) {
+      console.error('[autoBackup] 备份失败:', err.message);
+      return { success: false, reason: err.message };
+    }
+  };
+
+  /**
+   * 清理超过 retentionDays 天的旧备份文件
+   */
+  proto._cleanOldBackups = function (bakDir, retentionDays) {
+    try {
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      const files = fs.readdirSync(bakDir);
+      for (const f of files) {
+        if (!f.startsWith('Rabbit_ERP_') || !f.endsWith('.bak')) continue;
+        const fp = path.join(bakDir, f);
+        try {
+          if (fs.statSync(fp).mtimeMs < cutoff) {
+            fs.unlinkSync(fp);
+            console.log(`[autoBackup] 清理旧备份: ${f}`);
+          }
+        } catch (_) { /* 跳过无法处理的文件 */ }
+      }
+    } catch (_) { /* bak 目录可能不存在 */ }
+  };
+
+  /**
    * 查询操作日志
    */
   proto.getOperationLogs = function (filter) {

@@ -16,6 +16,7 @@ interface SubjectTreeNode extends FinanceSubject {
 
 const api = getFinanceApi();
 const period = ref('2026-06');
+const currentYear = computed(() => period.value?.slice(0, 4) || String(new Date().getFullYear()));
 const loading = ref(false);
 
 /* ========== 科目树（所有账簿共用） ========== */
@@ -622,6 +623,16 @@ const detailSubject = computed(() =>
 onMounted(async () => {
   const data = await api.bootstrap();
   period.value = data.book.current_period;
+  // 根据当前账套期间初始化各子账簿期间的默认值
+  const cp = period.value;
+  const y = cp.slice(0, 4);
+  qdPeriod.value = cp;
+  pbPeriod.value = cp;
+  pdPeriod.value = cp;
+  qgPeriodFrom.value = `${y}-01`;
+  qgPeriodTo.value = cp;
+  generalPeriodFrom.value = `${y}-01`;
+  generalPeriodTo.value = cp;
   allSubjects.value = data.subjects;
   // 默认账簿为明细账时，自动加载第一个科目的明细
   if (activeBook.value === 'detail' && subjectTree.value.length > 0) {
@@ -646,6 +657,101 @@ async function loadData() {
       balanceOpeningMap.value = map;
     }
   } finally { loading.value = false; }
+}
+
+/* ===== 通用 CSV 导出 ===== */
+function downloadCsv(headers: string[], rows: Array<Record<string, string | number>>, filename: string) {
+  const lines: string[] = ['\uFEFF' + headers.join(',')]; // BOM for Excel
+  for (const row of rows) {
+    const vals = headers.map(h => {
+      const v = row[h];
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      // 如果包含逗号、引号或换行，用双引号包裹
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    });
+    lines.push(vals.join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportCurrentBook() {
+  const bookKey = activeBook.value;
+  const now = new Date();
+  const ts = `${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+
+  // 多栏账
+  if (bookKey === 'multiColumn' && mcResult.value) {
+    const { cols, rows } = mcResult.value;
+    const headers = ['科目编码', '科目名称', ...cols.map((c: any) => `${c.code} ${c.name}(借)`), ...cols.map((c: any) => `${c.code} ${c.name}(贷)`), '借方合计', '贷方合计', '余额'];
+    const csvRows = rows.map((r: MultiColumnLedgerRow) => ({
+      '科目编码': r.code, '科目名称': r.name,
+      ...Object.fromEntries(cols.map((c: any, i: number) => [`${c.code} ${c.name}(借)`, r.debits?.[i] || 0])),
+      ...Object.fromEntries(cols.map((c: any, i: number) => [`${c.code} ${c.name}(贷)`, r.credits?.[i] || 0])),
+      '借方合计': r.totalDebit || 0, '贷方合计': r.totalCredit || 0, '余额': r.balance || 0,
+    }));
+    downloadCsv(headers, csvRows, `多栏账_${mcParentCode.value}_${ts}.csv`);
+    return;
+  }
+
+  // 数量金额明细账
+  if (bookKey === 'qtyDetail' && qdRows.value.length > 0) {
+    const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '数量', '单价', '单位'];
+    const csvRows = qdRows.value.map(r => ({
+      '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word}-${r.voucher_no}`, '摘要': r.summary || '',
+      '借方金额': r.debit, '贷方金额': r.credit, '数量': r.quantity, '单价': r.unit_price, '单位': r.unit || '',
+    }));
+    downloadCsv(headers, csvRows, `数量金额明细账_${qdSubjectCode.value}_${ts}.csv`);
+    return;
+  }
+
+  // 数量金额总账
+  if (bookKey === 'qtyGeneral' && qgRows.value.length > 0) {
+    const headers = ['科目编码', '科目名称', '期初数量', '期初金额', '数量(收)', '数量(付)', '净数量', '金额(收)', '金额(付)', '净金额', '单位'];
+    const csvRows = qgRows.value.map(r => ({
+      '科目编码': r.code, '科目名称': r.name,
+      '期初数量': r.opening_quantity, '期初金额': r.opening_amount,
+      '数量(收)': r.in_quantity, '数量(付)': r.out_quantity, '净数量': r.net_quantity,
+      '金额(收)': r.in_amount, '金额(付)': r.out_amount, '净金额': r.net_amount,
+      '单位': r.unit || '',
+    }));
+    downloadCsv(headers, csvRows, `数量金额总账_${ts}.csv`);
+    return;
+  }
+
+  // 核算项目余额表
+  if (bookKey === 'projectBalance' && pbRows.value.length > 0) {
+    const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '余额方向', '余额'];
+    const csvRows = pbRows.value.map(r => ({
+      '科目编码': r.subject_code, '科目名称': r.subject_name,
+      '借方金额': r.debit_amount, '贷方金额': r.credit_amount,
+      '余额方向': r.debit_amount >= r.credit_amount ? '借' : '贷',
+      '余额': Math.abs(r.debit_amount - r.credit_amount),
+    }));
+    downloadCsv(headers, csvRows, `核算项目余额表_${ts}.csv`);
+    return;
+  }
+
+  // 核算项目明细账
+  if (bookKey === 'projectDetail' && pdRows.value.length > 0) {
+    const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '余额方向', '余额'];
+    const csvRows = pdRows.value.map(r => ({
+      '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word || ''}-${r.voucher_no || ''}`,
+      '摘要': r.summary || '', '借方金额': r.debit, '贷方金额': r.credit,
+      '余额方向': (r.debit || 0) >= (r.credit || 0) ? '借' : '贷',
+      '余额': Math.abs((r.debit || 0) - (r.credit || 0)),
+    }));
+    downloadCsv(headers, csvRows, `核算项目明细账_${ts}.csv`);
+    return;
+  }
+
+  ElMessage.warning('当前表格无数据可导出');
 }
 
 // ponytail: 切换账簿，category 由 bookGroups key 自动推导
@@ -1182,7 +1288,7 @@ function handleExportBalance() {
               <div class="mc-toolbar-row">
                 <span class="toolbar-label">会计期间</span>
                 <el-select v-model="period" size="small" style="width:120px" @change="queryMultiColumn">
-                  <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                  <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
                 </el-select>
                 <span class="toolbar-label" style="margin-left:16px">上级科目</span>
                 <el-select v-model="mcParentCode" size="small" style="width:220px" placeholder="选择上级科目" @change="onMcParentChange">
@@ -1195,6 +1301,7 @@ function handleExportBalance() {
                 <el-button size="small" style="margin-left:8px" @click="mcShowDialog = true; mcSchemeName = mcSchemeId > 0 ? mcSchemes.find(s => s.id === mcSchemeId)?.name || '' : ''">保存方案</el-button>
                 <el-button v-if="mcSchemeId > 0" size="small" type="danger" plain @click="deleteMcScheme">删除方案</el-button>
                 <el-button size="small" type="primary" style="margin-left:auto" @click="queryMultiColumn" :disabled="!mcParentCode || mcChildren.length === 0">查询</el-button>
+                <el-button size="small" @click="exportCurrentBook" :disabled="!mcResult || mcLoading">导出</el-button>
               </div>
             </div>
 
@@ -1294,13 +1401,14 @@ function handleExportBalance() {
             <div class="query-bar">
               <span class="query-label">期间</span>
               <el-select v-model="qdPeriod" size="small" style="width:110px" @change="queryQtyDetail">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
               </el-select>
               <span class="query-label" style="margin-left:12px">日期</span>
               <el-date-picker v-model="qdStartDate" type="date" size="small" style="width:130px" placeholder="开始日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" @change="queryQtyDetail" />
               <span class="query-sep">至</span>
               <el-date-picker v-model="qdEndDate" type="date" size="small" style="width:130px" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" @change="queryQtyDetail" />
               <el-button size="small" type="primary" style="margin-left:12px" @click="queryQtyDetail" :disabled="!qdSubjectCode">查询</el-button>
+              <el-button size="small" @click="exportCurrentBook" :disabled="qdRows.length === 0 || qdLoading">导出</el-button>
             </div>
             <el-table v-if="qdRows.length > 0" :data="qdRows" border stripe size="small" :max-height="450">
               <el-table-column prop="voucher_date" label="日期" min-width="90" fixed />
@@ -1336,11 +1444,11 @@ function handleExportBalance() {
             <div class="query-bar">
               <span class="query-label">期间</span>
               <el-select v-model="qgPeriodFrom" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
               </el-select>
               <span class="query-sep">至</span>
               <el-select v-model="qgPeriodTo" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
               </el-select>
               <span class="query-label" style="margin-left:12px">科目</span>
               <el-select v-model="qgSubjectCode" size="small" style="width:200px" clearable placeholder="全部科目" filterable>
@@ -1352,6 +1460,7 @@ function handleExportBalance() {
                 <el-radio-button value="all">全部</el-radio-button>
               </el-radio-group>
               <el-button size="small" type="primary" style="margin-left:12px" @click="queryQtyGeneral">查询</el-button>
+              <el-button size="small" @click="exportCurrentBook" :disabled="qgRows.length === 0 || qgLoading">导出</el-button>
             </div>
             <el-table v-if="qgRows.length > 0" :data="qgRows" border stripe size="small" :max-height="450">
               <el-table-column prop="code" label="科目编码" min-width="90" fixed />
@@ -1383,7 +1492,7 @@ function handleExportBalance() {
             <div class="query-bar">
               <span class="query-label">期间</span>
               <el-select v-model="pbPeriod" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
               </el-select>
               <span class="query-label" style="margin-left:12px">核算类别</span>
               <el-select v-model="pbTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="onPbTypeChange">
@@ -1394,6 +1503,7 @@ function handleExportBalance() {
                 <el-option v-for="v in pbAuxValues" :key="v.id" :label="v.code + ' ' + v.name" :value="v.id" />
               </el-select>
               <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectBalance">查询</el-button>
+              <el-button size="small" @click="exportCurrentBook" :disabled="pbRows.length === 0 || pbLoading">导出</el-button>
             </div>
             <el-table v-if="pbRows.length > 0" :data="pbRows" border stripe size="small" :max-height="450">
               <el-table-column prop="subject_code" label="科目编码" min-width="90" fixed />
@@ -1421,7 +1531,7 @@ function handleExportBalance() {
             <div class="query-bar">
               <span class="query-label">期间</span>
               <el-select v-model="pdPeriod" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="'2026-'+m" :value="'2026-'+m" />
+                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
               </el-select>
               <span class="query-label" style="margin-left:12px">核算类别</span>
               <el-select v-model="pdTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="onPdTypeChange">
@@ -1436,6 +1546,7 @@ function handleExportBalance() {
               <span class="query-sep">至</span>
               <el-date-picker v-model="pdEndDate" type="date" size="small" style="width:130px" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" />
               <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectDetail">查询</el-button>
+              <el-button size="small" @click="exportCurrentBook" :disabled="pdRows.length === 0 || pdLoading">导出</el-button>
             </div>
             <el-table v-if="pdRows.length > 0" :data="pdRows" border stripe size="small" :max-height="450">
               <el-table-column prop="voucher_date" label="日期" min-width="90" fixed />

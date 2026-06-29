@@ -195,4 +195,13 @@ export class ElectronFinanceApi implements FinanceApi {
   async listVoucherSummaries(): Promise<import('../vite-env').VoucherSummary[]> { return ipc('listVoucherSummaries'); }
   async createVoucherSummary(text: string, category: string): Promise<import('../vite-env').VoucherSummary> { return ipc('createVoucherSummary', { text, category }); }
   async deleteVoucherSummary(id: number): Promise<void> { return ipc('deleteVoucherSummary', id); }
+
+  /* 固定资产 */
+  async listAssetCards(filter?: any) { return ipc('listAssetCards', filter); }
+  async getAssetCard(id: number) { return ipc('getAssetCard', id); }
+  async createAssetCard(payload: any) { return ipc('createAssetCard', payload); }
+  async updateAssetCard(id: number, payload: any) { return ipc('updateAssetCard', { ...payload, id }); }
+  async deleteAssetCard(id: number) { return ipc('deleteAssetCard', id); }
+  async depreciateAsset(id: number, periods = 1) { return ipc('depreciateAsset', { id, periods }); }
+  async getAssetStats() { return ipc('getAssetStats'); }
 }

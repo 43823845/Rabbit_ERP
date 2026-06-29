@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // ponytail: 根组件 — 侧栏导航/顶栏/主内容区/公司切换/Electron窗口控制
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Grid, Tools, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument, TrendCharts } from '@element-plus/icons-vue';
+import { HomeFilled, Document, Wallet, Notebook, DataAnalysis, Grid, Tools, User, SwitchButton, Sort, Fold, Expand, Minus, CopyDocument, TrendCharts, Coin } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { useAuth } from './auth';
 import { getFinanceApi } from './api';
@@ -42,11 +42,14 @@ onMounted(() => {
   clockTimer = setInterval(() => { now.value = new Date(); }, 1000);
   checkDbStatus();
   statusTimer = setInterval(checkDbStatus, 30000);
+  loadCompanies();
+  window.addEventListener('company-changed', refreshCompanies);
 });
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer);
   if (statusTimer) clearInterval(statusTimer);
+  window.removeEventListener('company-changed', refreshCompanies);
 });
 
 const timeStr = computed(() => {
@@ -66,6 +69,7 @@ const menuItems = [
   { key: '/closing',   label: '期末结账', icon: TrendCharts },
   { key: '/subjects',  label: '科目管理', icon: Grid },
   { key: '/opening',   label: '初始余额', icon: Wallet },
+  { key: '/assets',   label: '固定资产', icon: Coin },
   { key: '/settings',  label: '设置',     icon: Tools },
 ];
 
@@ -81,11 +85,9 @@ const companiesCache = ref<Company[]>([]);
 const companiesLoaded = ref(false);
 
 async function loadCompanies() {
-  if (!companiesLoaded.value) {
-    companies.value = await api.getCompanies();
-    companiesCache.value = companies.value;
-    companiesLoaded.value = true;
-  }
+  companies.value = await api.getCompanies();
+  companiesCache.value = companies.value;
+  companiesLoaded.value = true;
 }
 
 async function refreshCompanies() {
@@ -100,10 +102,15 @@ async function handleSwitchCompany(companyId: string) {
   if (auth.state.user) {
     auth.state.user.companyId = companyId;
     auth.state.user.companyName = c?.name || '';
+    auth.persist();
   }
   routerViewKey.value++;
-  ElMessage.success(`已切换到「${c?.name}」`);
+  ElMessage.success(`已切换到「${c?.name || companyId}」`);
 }
+
+// 暴露刷新公司列表方法，供设置页面修改公司后调用
+const companyRefreshKey = Symbol('companyRefresh');
+provide(companyRefreshKey, refreshCompanies);
 
 function handleLogout() {
   auth.logout();
@@ -146,17 +153,24 @@ function handleUserCmd(cmd: string) {
         <span class="topbar-divider">|</span>
         <span class="topbar-clock" :title="timeStr">{{ timeStr }}</span>
         <span class="topbar-divider">|</span>
-        <span class="topbar-company-label">当前账套：{{ auth.state.user?.companyName || '未选择' }}</span>
-        <el-dropdown @command="handleSwitchCompany" trigger="click" class="mx-1">
-          <span class="topbar-link" @click="loadCompanies">
+        <el-dropdown @command="handleSwitchCompany" trigger="click" class="topbar-company-dropdown" popper-class="company-popper">
+          <span class="topbar-link">
             <el-icon><Sort /></el-icon>
-            切换账套
+            {{ auth.state.user?.companyName || '未选择' }}
+            <el-tag type="primary" size="small" effect="plain" style="margin-left:4px;font-size:10px;">{{ companies.length }}个</el-tag>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item v-for="c in companies" :key="c.id" :command="c.id">
-                {{ c.name }}
-                <el-tag v-if="c.id === auth.state.user?.companyId" type="primary" size="small" style="margin-left:6px">当前</el-tag>
+              <el-dropdown-item
+                v-for="c in companies"
+                :key="c.id"
+                :command="c.id"
+                :class="{ 'is-active': c.id === auth.state.user?.companyId }"
+              >
+                <span style="display:flex;align-items:center;justify-content:space-between;width:100%;min-width:160px;">
+                  <span>{{ c.name }}</span>
+                  <el-tag v-if="c.id === auth.state.user?.companyId" type="primary" size="small">✓</el-tag>
+                </span>
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>

@@ -20,6 +20,7 @@ const { applyMultiColumnMethods } = require('./multi-column.cjs');
 const { applyDataManagerMethods } = require('./data-manager.cjs');
 const { applyTemplateMethods } = require('./templates.cjs');
 const { applySummaryMethods } = require('./summaries.cjs');
+const { applyAssetMethods } = require('./assets.cjs');
 
 let Database;
 try {
@@ -117,5 +118,6 @@ applyMultiColumnMethods(FinanceDatabase);
 applyDataManagerMethods(FinanceDatabase);
 applyTemplateMethods(FinanceDatabase);
 applySummaryMethods(FinanceDatabase);
+applyAssetMethods(FinanceDatabase);
 
 module.exports = { FinanceDatabase, validateVoucher: require('./utils.cjs').validateVoucher };

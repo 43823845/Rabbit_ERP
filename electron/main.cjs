@@ -11,6 +11,17 @@ const config = require('../app.config.cjs');
 const isDev = process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
 const database = new FinanceDatabase(app);
 
+// 全局异常捕获：防止进程崩溃，记录日志并尝试紧急备份后退出
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] 未捕获异常:', err);
+  try { database.autoBackup(); } catch (_) { /* */ }
+  try { database.close(); } catch (_) { /* */ }
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] 未处理的 Promise 拒绝:', reason);
+});
+
 let mainWindow = null;
 let tray = null;
 
@@ -176,11 +187,18 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
+  // 退出前自动备份数据库到安装目录 bak/
+  database.autoBackup();
   if (tray) {
     tray.removeAllListeners();
     tray.destroy();
     tray = null;
   }
+  database.close();
+});
+
+// 最后一道防线：确保数据库连接被释放
+app.on('will-quit', () => {
   database.close();
 });
 
@@ -309,6 +327,15 @@ function registerIpc() {
   wrap('getBalanceSheet', (period) => database.getBalanceSheet(period));
   wrap('getCashFlowStatement', (period) => database.getCashFlowStatement(period));
   wrap('checkYearEndIntegrity', (period) => database.checkYearEndIntegrity(period));
+
+  /* 固定资产 */
+  wrap('listAssetCards', (f) => database.listAssetCards(f || {}));
+  wrap('getAssetCard', (id) => database.getAssetCard(id));
+  wrap('createAssetCard', (p) => database.createAssetCard(p));
+  wrap('updateAssetCard', (p) => database.updateAssetCard(p.id, p));
+  wrap('deleteAssetCard', (id) => database.deleteAssetCard(id));
+  wrap('depreciateAsset', (p) => database.depreciateAsset(p.id, p.periods || 1));
+  wrap('getAssetStats', () => database.getAssetStats());
 
   /* aux project types */
   wrap('listAuxProjectTypes', () => database.listAuxProjectTypes());

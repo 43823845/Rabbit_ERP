@@ -10,6 +10,7 @@ import OpeningBalanceView from './views/OpeningBalanceView.vue';
 import AccountSubject from './views/AccountSubject.vue';
 import ClosingView from './views/ClosingView.vue';
 import SettingsView from './views/SettingsView.vue';
+import AssetView from './views/AssetView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -24,6 +25,7 @@ const router = createRouter({
     { path: '/subjects', name: 'subjects', component: AccountSubject, meta: { requiresAuth: true } },
     { path: '/closing', name: 'closing', component: ClosingView, meta: { requiresAuth: true } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { requiresAuth: true } },
+    { path: '/assets', name: 'assets', component: AssetView, meta: { requiresAuth: true } },
   ],
 });
 

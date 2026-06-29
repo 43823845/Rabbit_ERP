@@ -43,6 +43,14 @@ function applyPeriodMethods(FinanceDatabase) {
       throw new Error(`当前期间存在 ${unpostedCnt.cnt} 张未过账凭证，请先审核并过账全部凭证后再结账`);
     }
 
+    // 强制试算平衡检查（不依赖前端开关，后端硬校验）
+    const tb = this.getTrialBalance(period);
+    if (!tb || !tb.totals) throw new Error('无法获取试算平衡数据，请检查科目余额');
+    const endingDiff = Math.abs((tb.totals.endingDebit || 0) - (tb.totals.endingCredit || 0));
+    if (endingDiff > 0.01) {
+      throw new Error(`试算不平衡（期末借方 ${tb.totals.endingDebit.toFixed(2)} ≠ 贷方 ${tb.totals.endingCredit.toFixed(2)}，差额 ${endingDiff.toFixed(2)}），请检查凭证后再结账`);
+    }
+
     // 损益结转
     this._carryForwardProfit(period);
 

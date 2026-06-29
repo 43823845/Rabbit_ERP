@@ -121,6 +121,21 @@ const deleteConfirmOpen = ref(false);
 const deleteTarget = ref<Company | null>(null);
 const deleteConfirmInput = ref('');
 
+function notifyCompanyChanged() {
+  window.dispatchEvent(new CustomEvent('company-changed'));
+}
+
+async function handleCreateCompany() {
+  try {
+    const name = prompt('请输入新账套名称：');
+    if (!name || !name.trim()) return;
+    const c = await api.createCompany({ name: name.trim() });
+    companies.value.push(c);
+    ElMessage.success(`账套「${c.name}」已创建`);
+    notifyCompanyChanged();
+  } catch (e: unknown) { ElMessage.error((e as Error)?.message || '创建失败'); }
+}
+
 function startRenameAccount(c: Company) {
   editingAccountId.value = c.id;
   editingAccountName.value = c.name;
@@ -129,12 +144,12 @@ function cancelRenameAccount() { editingAccountId.value = null; }
 async function saveRenameAccount(c: Company) {
   try {
     await api.updateCompany(c.id, { name: editingAccountName.value });
-    // 直接修改列表中已有对象的 name 属性，确保 Vue 响应式更新
     const target = companies.value.find(x => x.id === c.id);
     if (target) target.name = editingAccountName.value;
     if (company.value?.id === c.id) company.value.name = editingAccountName.value;
     editingAccountId.value = null;
     ElMessage.success('账套已重命名');
+    notifyCompanyChanged();
   } catch (e: unknown) { ElMessage.error((e as Error)?.message || '重命名失败'); }
 }
 
@@ -154,6 +169,7 @@ async function confirmDeleteCompany() {
     companies.value = companies.value.filter(x => x.id !== deleteTarget.value!.id);
     ElMessage.success('账套已删除');
     deleteConfirmOpen.value = false;
+    notifyCompanyChanged();
   } catch (e: unknown) { ElMessage.error((e as Error)?.message || '删除失败'); }
 }
 
@@ -528,7 +544,10 @@ function formatFileSize(bytes: number): string {
 
         <!-- ===== 账套管理 ===== -->
         <div v-else-if="activeMenu === 'accounts'" class="sp-panel">
-          <div class="sp-panel-header"><div class="sp-panel-title-line"></div><span>账套列表</span></div>
+          <div class="sp-panel-header">
+            <div class="sp-panel-title-line"></div><span>账套列表</span>
+            <el-button size="small" type="primary" style="margin-left:auto" @click="handleCreateCompany"><el-icon><Plus /></el-icon>新增账套</el-button>
+          </div>
           <div class="sp-panel-body">
             <div class="ck-list">
               <div v-for="row in companies" :key="row.id" class="ck-item" :class="row.id === company?.id ? 'ck-item--pass' : ''">

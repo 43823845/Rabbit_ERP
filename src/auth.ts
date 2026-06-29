@@ -36,5 +36,5 @@ export function useAuth() {
     localStorage.setItem(AUTH_KEY, JSON.stringify({ loggedIn: state.loggedIn, user: state.user }));
   }
 
-  return { state, login, logout, isLoggedIn };
+  return { state, login, logout, isLoggedIn, persist };
 }

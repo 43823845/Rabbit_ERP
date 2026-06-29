@@ -444,6 +444,48 @@ export interface VoucherSummary {
   createdAt: string;
 }
 
+/* ---- 固定资产 ---- */
+export interface AssetCard {
+  id: number;
+  book_id: number;
+  asset_code: string;
+  asset_name: string;
+  category: string;
+  buy_date: string;
+  original_value: number;
+  residual_rate: number;
+  useful_life_years: number;
+  monthly_depreciation: number;
+  accumulated_depreciation: number;
+  net_value: number;
+  status: string;
+  department: string;
+  remark: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssetCardPayload {
+  assetCode?: string;
+  assetName?: string;
+  category?: string;
+  buyDate?: string;
+  originalValue?: number;
+  residualRate?: number;
+  usefulLifeYears?: number;
+  accumulatedDepreciation?: number;
+  status?: string;
+  department?: string;
+  remark?: string;
+}
+
+export interface AssetStats {
+  totalOriginal: number;
+  totalDep: number;
+  totalNet: number;
+  cnt: number;
+}
+
 /* ---- 数据管理 ---- */
 export interface DatabaseInfo {
   dbPath: string;
@@ -593,6 +635,15 @@ export interface FinanceApi {
   listVoucherSummaries(): Promise<VoucherSummary[]>;
   createVoucherSummary(text: string, category: string): Promise<VoucherSummary>;
   deleteVoucherSummary(id: number): Promise<void>;
+
+  /* 固定资产 */
+  listAssetCards(filter?: { status?: string; category?: string }): Promise<AssetCard[]>;
+  getAssetCard(id: number): Promise<AssetCard | undefined>;
+  createAssetCard(payload: AssetCardPayload): Promise<{ id: number; monthlyDepreciation: number }>;
+  updateAssetCard(id: number, payload: AssetCardPayload): Promise<{ monthlyDepreciation: number }>;
+  deleteAssetCard(id: number): Promise<void>;
+  depreciateAsset(id: number, periods?: number): Promise<{ addedDepreciation: number; accumulatedDepreciation: number; netValue: number; status: string }>;
+  getAssetStats(): Promise<AssetStats>;
 }
 
 declare global {
