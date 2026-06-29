@@ -5,7 +5,7 @@
  * 职责：设置各科目年初/期初余额，是账务初始化的第一步
  */
 import { onMounted, ref, computed } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { QuestionFilled, CircleCheckFilled, CircleCloseFilled, List, Upload, Download } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
 import type { FinanceSubject, OpeningBalance, FinanceVoucher } from '../api';
@@ -139,6 +139,15 @@ async function handleSave() {
 async function saveAll() {
   saving.value = true;
   try {
+    // 试算平衡检查
+    const s = stats.value;
+    if (Math.abs(s.diff) > 0.01) {
+      await ElMessageBox.confirm(
+        `期初余额借贷不平衡：借方合计 ${s.totalDebit.toFixed(2)}，贷方合计 ${s.totalCredit.toFixed(2)}，差额 ${s.diff.toFixed(2)}。\n\n仍要保存吗？`,
+        '试算不平衡',
+        { confirmButtonText: '仍要保存', cancelButtonText: '取消', type: 'warning' }
+      );
+    }
     const entries = editableSubjects.value.map(s => {
       const balance = editMap.value[s.code]?.balance || 0;
       return {
