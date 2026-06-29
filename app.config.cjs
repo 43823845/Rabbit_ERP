@@ -9,7 +9,7 @@ module.exports = {
   name: 'rabbit-erp-desktop',
 
   /** 版本号 */
-  version: '0.1.1',
+  version: '1.1.0',
 
   /** 应用描述 */
   description: 'Rabbit ERP - 财务管理系统',

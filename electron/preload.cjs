@@ -49,6 +49,21 @@ const channels = [
   'listVoucherWords', 'createVoucherWord', 'updateVoucherWord', 'deleteVoucherWord',
   /* 数据管理 */
   'getDatabaseInfo', 'vacuumDatabase', 'backupDatabase', 'exportAllData', 'exportDataJson',
+  /* 固定资产 */
+  'listAssetCards', 'getAssetCard', 'createAssetCard', 'updateAssetCard', 'deleteAssetCard',
+  'depreciateAsset', 'getAssetStats',
+  /* 现金流量表 & 年末结转 */
+  'getCashFlowStatement', 'checkYearEndIntegrity',
+  /* 批量操作 */
+  'batchAuditVouchers', 'batchPostVouchers',
+  /* 操作日志 */
+  'getOperationLogs',
+  /* 科目引用检查 */
+  'checkSubjectUsage',
+  /* 凭证模板 */
+  'listVoucherTemplates', 'saveVoucherTemplate', 'deleteVoucherTemplate',
+  /* 摘要库 */
+  'listVoucherSummaries', 'createVoucherSummary', 'deleteVoucherSummary',
 ];
 
 channels.forEach((name) => {
