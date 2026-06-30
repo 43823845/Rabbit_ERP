@@ -108,7 +108,7 @@ workspace/
 ```js
 module.exports = {
   name: 'rabbit-erp-desktop',    // npm 名称
-  version: '1.1.0',              // 版本号
+  version: '1.2.0',              // 版本号
   productName: 'Rabbit_ERP',     // 产品名（exe/标题/品牌）
   title: 'Rabbit_ERP',           // 窗口标题
   winIcon: 'logo.ico',           // Windows 图标
