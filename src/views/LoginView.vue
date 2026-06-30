@@ -74,6 +74,7 @@ async function handleLogin() {
       user.companyName = c?.name || '未知账套';
     }
     auth.login(user);
+    window.dispatchEvent(new CustomEvent('company-changed'));
     ElMessage.success(`欢迎回来，${user.alias || user.username}`);
     router.replace('/dashboard');
   } catch (e: any) {
