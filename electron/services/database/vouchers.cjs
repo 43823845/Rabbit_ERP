@@ -12,6 +12,20 @@ function applyVoucherMethods(FinanceDatabase) {
   const proto = FinanceDatabase.prototype;
 
   /**
+   * 检查期间是否开启，若已结账则拦截报错
+   */
+  proto._checkPeriodOpen = function (period) {
+    if (!this.db) return;
+    this._ensureBookId();
+    const row = this.db.prepare(
+      'SELECT status FROM acct_period WHERE book_id = ? AND period = ?'
+    ).get(this.currentBookId, period);
+    if (row && row.status === 'closed') {
+      throw new Error(`期间 ${period} 已结账，不允许在该期间增删改凭证`);
+    }
+  };
+
+  /**
    * 查询凭证列表（支持多条件筛选 + 分页）
    */
   proto.listVouchers = function ({ period, status, voucherWord, keyword, subjectCode,
@@ -102,6 +116,7 @@ function applyVoucherMethods(FinanceDatabase) {
    * 创建凭证
    */
   proto.createVoucher = function (payload) {
+    this._checkPeriodOpen(payload.period || '2026-06');
     validateVoucher(payload);
 
     // 号段唯一性检查：同一账套中 (voucherWord, voucherNo, period) 不可重复
@@ -180,6 +195,8 @@ function applyVoucherMethods(FinanceDatabase) {
       throw new Error('仅草稿状态可修改');
     }
 
+    this._checkPeriodOpen(existing.period);
+
     validateVoucher({ voucherWord: existing.voucher_word, voucherNo: existing.voucher_no, entries });
 
     const self = this;
@@ -208,6 +225,8 @@ function applyVoucherMethods(FinanceDatabase) {
     const v = this.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
     if (!v || v.status !== 'draft') throw new Error('仅草稿状态可删除');
 
+    this._checkPeriodOpen(v.period);
+
     const path = require('node:path');
     const fs = require('node:fs');
     const attachDir = path.join(this.app.getPath('userData'), 'attachments', String(id));
@@ -228,7 +247,16 @@ function applyVoucherMethods(FinanceDatabase) {
     return this.getVoucher(id);
   };
 
-  proto.auditVoucher = function (id) { return this._changeVoucherStatus(id, 'draft', 'audited', '仅草稿状态可审核', 'audit_voucher'); };
+  proto.auditVoucher = function (id, operator) {
+    if (this.db) {
+      this._ensureBookId();
+      const v = this.db.prepare('SELECT maker FROM gl_voucher WHERE id = ? AND book_id = ?').get(id, this.currentBookId);
+      if (v && v.maker === operator) {
+        throw new Error(`三权分立限制：审核人与制单人（${v.maker}）不能为同一人`);
+      }
+    }
+    return this._changeVoucherStatus(id, 'draft', 'audited', '仅草稿状态可审核', 'audit_voucher');
+  };
   proto.unauditVoucher = function (id) { return this._changeVoucherStatus(id, 'audited', 'draft', '仅已审核状态可反审核', 'unaudit_voucher'); };
   proto.postVoucher = function (id) { return this._changeVoucherStatus(id, 'audited', 'posted', '仅已审核状态可过账', 'post_voucher'); };
   proto.unpostVoucher = function (id) {
@@ -250,19 +278,25 @@ function applyVoucherMethods(FinanceDatabase) {
   /**
    * 批量审核凭证
    */
-  proto.batchAuditVouchers = function (ids) {
+  proto.batchAuditVouchers = function (ids, operator) {
     if (!this.db) return { success: 0, failed: ids.length };
     this._ensureBookId();
     let success = 0, failed = 0;
     const self = this;
     const tx = this.db.transaction(() => {
+      const getMaker = self.db.prepare('SELECT maker FROM gl_voucher WHERE id = ? AND book_id = ?');
       const stmt = self.db.prepare('UPDATE gl_voucher SET status = ? WHERE id = ? AND status = ? AND book_id = ?');
       for (const id of ids) {
+        const v = getMaker.get(id, self.currentBookId);
+        if (v && v.maker === operator) {
+          failed++;
+          continue;
+        }
         const result = stmt.run('audited', id, 'draft', self.currentBookId);
         if (result.changes > 0) {
           success++;
-          const v = self.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
-          if (v) self._log('audit_voucher', `凭证 ${v.voucher_word}-${v.voucher_no}`);
+          const vInfo = self.db.prepare('SELECT * FROM gl_voucher WHERE id = ?').get(id);
+          if (vInfo) self._log('audit_voucher', `凭证 ${vInfo.voucher_word}-${vInfo.voucher_no}`);
         } else {
           failed++;
         }

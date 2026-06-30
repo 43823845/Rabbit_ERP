@@ -678,7 +678,7 @@ export interface FinanceApi {
   updateVoucher(payload: VoucherPayload): Promise<FinanceVoucher & { __error?: string }>;
   deleteVoucher(id: number): Promise<void>;
 
-  auditVoucher(id: number): Promise<FinanceVoucher & { __error?: string }>;
+  auditVoucher(id: number, operator?: string): Promise<FinanceVoucher & { __error?: string }>;
   unauditVoucher(id: number): Promise<FinanceVoucher & { __error?: string }>;
   postVoucher(id: number): Promise<FinanceVoucher & { __error?: string }>;
   unpostVoucher(id: number): Promise<FinanceVoucher & { __error?: string }>;
@@ -752,7 +752,7 @@ export interface FinanceApi {
   exportDataJson(): Promise<{ success?: boolean; canceled?: boolean; path?: string; __error?: string }>;
 
   /* 批量操作 */
-  batchAuditVouchers(ids: number[]): Promise<{ success: number; failed: number }>;
+  batchAuditVouchers(ids: number[], operator?: string): Promise<{ success: number; failed: number }>;
   batchPostVouchers(ids: number[]): Promise<{ success: number; failed: number }>;
 
   /* 操作日志 */

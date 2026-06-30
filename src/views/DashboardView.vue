@@ -12,8 +12,10 @@ import type { FinanceSubject, FinanceVoucher, VoucherFilter } from '../api';
 import { getFinanceApi } from '../api';
 import VoucherModal from '../components/VoucherModal.vue';
 import VoucherListTable from '../components/VoucherListTable.vue';
+import { useAuth } from '../auth';
 
 const api = getFinanceApi();
+const auth = useAuth();
 
 const subjects = ref<FinanceSubject[]>([]);
 const loading = ref(false);
@@ -205,7 +207,8 @@ async function handleDeleted() { voucherModal.open = false; await refreshBalance
 async function doAudit(v: FinanceVoucher) {
   if (v.status !== 'draft') { ElMessage.warning('仅草稿状态的凭证可审核'); return; }
   await ElMessageBox.confirm(`确定要审核凭证 ${v.voucher_word}-${v.voucher_no} 号吗？`, '确认审核', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' });
-  await api.auditVoucher(v.id);
+  const userAlias = auth.state.user?.alias || auth.state.user?.username || 'admin';
+  await api.auditVoucher(v.id, userAlias);
   ElMessage.success('审核成功');
   await refreshBalances(); await refreshStats(); await doSearch();
 }

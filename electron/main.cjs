@@ -203,7 +203,7 @@ app.on('will-quit', () => {
 });
 
 function registerIpc() {
-  const wrap = (name, fn) => ipcMain.handle(`finance:${name}`, (_e, p) => { try { return fn(p); } catch (err) { console.error(`[IPC] finance:${name} error:`, err); return { __error: err.message }; } });
+  const wrap = (name, fn) => ipcMain.handle(`finance:${name}`, (_e, ...args) => { try { return fn(...args); } catch (err) { console.error(`[IPC] finance:${name} error:`, err); return { __error: err.message }; } });
 
   /* 窗口控制 */
   ipcMain.handle('window:min', () => { BrowserWindow.getFocusedWindow()?.minimize(); });

@@ -1,51 +1,44 @@
 <script setup lang="ts">
-// ponytail: 账簿查询 — 明细账/总账/余额表/多栏账/数量金额/核算项目
-import { onMounted, ref, shallowRef, computed, watch } from 'vue';
+// ponytail: 账簿查询主面板 (1.2.0 重构版)
+import { onMounted, ref, computed, watch } from 'vue';
 import { ElMessage } from 'element-plus';
+import { Search } from '@element-plus/icons-vue';
 import { getFinanceApi } from '../api';
-import type { SubjectBalance, FinanceSubject, MultiColumnLedgerResult, MultiColumnLedgerRow,
-  QuantityDetailLedgerRow, QuantityGeneralLedgerRow,
-  AuxProjectBalanceRow, AuxProjectDetailRow, AuxProjectType, AuxProjectValue,
-  AuxProjectCombo,
-  TrialBalance,
-  DetailLedgerResult } from '../api';
+import type { FinanceSubject } from '../api';
 import { buildTreeOrderedSubjects } from '../utils/subjects';
-import { downloadExcel } from '../utils/excelExport';
 
-/* 科目树节点（带 children） */
+// 引入解耦后的子账簿面板组件
+import SubjectBalanceLedger from '../components/ledger/SubjectBalanceLedger.vue';
+import DetailLedger from '../components/ledger/DetailLedger.vue';
+import GeneralLedger from '../components/ledger/GeneralLedger.vue';
+import MultiColumnLedger from '../components/ledger/MultiColumnLedger.vue';
+import QuantityLedger from '../components/ledger/QuantityLedger.vue';
+import ProjectLedger from '../components/ledger/ProjectLedger.vue';
+
 interface SubjectTreeNode extends FinanceSubject {
   children: SubjectTreeNode[];
 }
 
 const api = getFinanceApi();
 const period = ref('2026-06');
-const currentYear = computed(() => period.value?.slice(0, 4) || String(new Date().getFullYear()));
-const loading = ref(false);
-
-/* ========== 科目树（所有账簿共用） ========== */
 const allSubjects = ref<FinanceSubject[]>([]);
+const selectedSubjectCode = ref('');
 const subjectExpandedKeys = ref<Set<string>>(new Set());
 
-/* 账簿导航 */
+/* 账簿导航定义 */
 type BookCategory = 'main' | 'aux';
-
 interface BookItem {
   key: string;
   label: string;
 }
 
-/* 账簿图标（SVG 极简符号） */
 const bookIcons: Record<string, string> = {
   detail:       `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>`,
   general:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
   balance:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>`,
-  trialBalance: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>`,
   multiColumn:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>`,
-  qtyDetail:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><circle cx="16" cy="16" r="2"/></svg>`,
-  qtyGeneral:   `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><circle cx="16" cy="12" r="2"/></svg>`,
-  projectBalance: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="10" cy="15" r="2"/></svg>`,
-  projectDetail: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><circle cx="10" cy="16" r="2"/></svg>`,
-  projectCombo:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
+  qtyLedger:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><circle cx="16" cy="16" r="2"/></svg>`,
+  projectLedger: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="10" cy="15" r="2"/></svg>`,
 };
 
 const bookGroups: Record<BookCategory, { title: string; items: BookItem[] }> = {
@@ -54,1096 +47,160 @@ const bookGroups: Record<BookCategory, { title: string; items: BookItem[] }> = {
     items: [
       { key: 'detail',       label: '明细账' },
       { key: 'general',      label: '总账' },
-      { key: 'balance',      label: '科目余额表' },
-      { key: 'trialBalance', label: '试算平衡表' },
+      { key: 'balance',      label: '科目余额与试算' },
       { key: 'multiColumn',  label: '多栏账' },
     ],
   },
   aux: {
     title: '辅助账簿',
     items: [
-      { key: 'qtyDetail',      label: '数量金额明细账' },
-      { key: 'qtyGeneral',     label: '数量金额总账' },
-      { key: 'projectBalance', label: '核算项目余额表' },
-      { key: 'projectDetail',  label: '核算项目明细账' },
-      { key: 'projectCombo',   label: '核算项目组合表' },
+      { key: 'qtyLedger',     label: '数量金额账簿' },
+      { key: 'projectLedger', label: '核算项目账簿' },
     ],
   },
 };
 
 const activeBook = ref('detail');
-
-// ponytail: 扁平化所有账簿项，供单行Tab渲染
 const allBookItems = computed(() => [
   ...bookGroups.main.items, ...bookGroups.aux.items,
 ]);
 
-const currentBookLabel = computed(() =>
-  allBookItems.value.find(i => i.key === activeBook.value)?.label || '明细账'
-);
-
-/* 科目余额表数据 */
-interface BalanceDisplayRow extends SubjectBalance {
-  directionLabel: string;
-  openingBalance: number;
-  endingBalance: number;
-}
-const balanceListRaw = shallowRef<SubjectBalance[]>([]);
-const balanceOpeningMap = ref<Map<string, { debit: number; credit: number }>>(new Map());
-const balanceLevel = ref('all');        // '1' | 'all'
-const balanceHideZero = ref(false);     // 隐藏余额为0的科目
-
-const balanceList = computed<BalanceDisplayRow[]>(() => {
-  let list = balanceListRaw.value.map(r => {
-    const subj = allSubjects.value.find(s => s.code === r.code);
-    const dir = subj?.direction === 'credit' ? '贷' : '借';
-    const opening = balanceOpeningMap.value.get(r.code);
-    const openingBal = opening
-      ? (dir === '借' ? opening.debit - opening.credit : opening.credit - opening.debit)
-      : 0;
-    return {
-      ...r,
-      directionLabel: dir,
-      openingBalance: openingBal,
-      endingBalance: subj?.direction === 'debit'
-        ? openingBal + r.debitAmount - r.creditAmount
-        : openingBal + r.creditAmount - r.debitAmount,
-    };
-  });
-  // 级次过滤
-  if (balanceLevel.value === '1') {
-    list = list.filter(r => {
-      const subj = allSubjects.value.find(s => s.code === r.code);
-      return subj?.level === 1;
-    });
-  }
-  // 隐藏零余额
-  if (balanceHideZero.value) {
-    list = list.filter(r => Math.abs(r.endingBalance) > 0.001 || Math.abs(r.debitAmount) > 0.001 || Math.abs(r.creditAmount) > 0.001 || Math.abs(r.openingBalance) > 0.001);
-  }
-  return list;
+// 只有明细账、数量金额明细账才在左侧显示科目树进行单科目筛选
+const showSubjectTree = computed(() => {
+  return activeBook.value === 'detail' || activeBook.value === 'qtyLedger';
 });
 
-const balanceSummary = computed(() => {
-  let openingDebit = 0, openingCredit = 0;
-  let debitAmt = 0, creditAmt = 0, endingDebit = 0, endingCredit = 0;
-  balanceList.value.forEach(r => {
-    const subj = allSubjects.value.find(s => s.code === r.code);
-    const isDebit = subj?.direction !== 'credit';
-    openingDebit += isDebit ? Math.max(0, r.openingBalance) : 0;
-    openingCredit += isDebit ? 0 : Math.max(0, r.openingBalance);
-    debitAmt += r.debitAmount;
-    creditAmt += r.creditAmount;
-    endingDebit += isDebit ? Math.max(0, r.endingBalance) : 0;
-    endingCredit += isDebit ? 0 : Math.abs(Math.min(0, r.endingBalance));
-  });
-  return { openingDebit, openingCredit, debitAmt, creditAmt, endingDebit, endingCredit };
-});
-
-/* ========== 试算平衡表 ========== */
-const tbData = ref<TrialBalance | null>(null);
-const tbLoading = ref(false);
-
-const tbBalanced = computed(() => {
-  const t = tbData.value?.totals;
-  if (!t) return false;
-  const eps = 0.005;
-  return Math.abs(t.openingDebit - t.openingCredit) < eps
-    && Math.abs(t.amountDebit - t.amountCredit) < eps
-    && Math.abs(t.endingDebit - t.endingCredit) < eps;
-});
-
-async function queryTrialBalance() {
-  tbLoading.value = true;
-  try {
-    tbData.value = await api.getTrialBalance(period.value);
-  } finally { tbLoading.value = false; }
-}
-
-/* ========== 多栏账 ========== */
-interface MultiColumnChild {
-  code: string;
-  name: string;
-}
-interface MultiColumnSchemeItem {
-  id: number;
-  name: string;
-  parent_code: string;
-  parent_name: string;
-  direction: string;
-  children_json: string;
-  updated_at: string;
-}
-
-const mcSchemes = ref<MultiColumnSchemeItem[]>([]);
-const mcSchemeId = ref(0);
-const mcParentCode = ref('');
-const mcParentName = ref('');
-const mcChildren = ref<MultiColumnChild[]>([]);
-const mcSchemeName = ref('');
-const mcShowDialog = ref(false);
-const mcLoading = ref(false);
-const mcResult = ref<MultiColumnLedgerResult>({ columns: [], rows: [], periodSummary: [] });
-const mcShowPeriodSummary = ref(false);
-
-/* 可选上级科目（非末级，有下级科目） */
-const mcParentCandidates = computed<{ code: string; name: string; children: MultiColumnChild[] }[]>(() => {
-  const tree = subjectTree.value;
-  const result: { code: string; name: string; children: MultiColumnChild[] }[] = [];
-  function walk(nodes: SubjectTreeNode[]) {
-    for (const n of nodes) {
-      if (n.children && n.children.length > 0) {
-        result.push({
-          code: n.code,
-          name: n.name,
-          children: n.children.map(c => ({ code: c.code, name: c.name })),
-        });
-        walk(n.children);
-      }
-    }
-  }
-  walk(tree);
-  return result;
-});
-
-/* 当前多栏列表头 */
-const mcColumns = computed(() => mcResult.value.columns);
-
-/* 多栏账行合计 */
-function mcRowTotal(row: MultiColumnLedgerRow): number {
-  return row.cells.reduce((sum, c) => sum + c.debit, 0);
-}
-
-/* 加载多栏方案列表 */
-async function loadMcSchemes() {
-  try { mcSchemes.value = await api.listMultiColumnSchemes(); } catch (e) { console.warn('[LedgerView] 加载多栏方案失败:', e); mcSchemes.value = []; }
-}
-
-/* 选中方案 */
-async function selectMcScheme(id: number) {
-  const s = mcSchemes.value.find(x => x.id === id);
-  if (!s) return;
-  mcSchemeId.value = s.id;
-  mcParentCode.value = s.parent_code;
-  mcParentName.value = s.parent_name;
-  mcSchemeName.value = s.name;
-  try { mcChildren.value = JSON.parse(s.children_json || '[]'); } catch (e) { console.warn('[LedgerView] 解析子科目JSON失败:', e); mcChildren.value = []; }
-  await queryMultiColumn();
-}
-
-/* 选择上级科目时自动填充子科目 */
-function onMcParentChange() {
-  const c = mcParentCandidates.value.find(p => p.code === mcParentCode.value);
-  if (c) {
-    mcParentName.value = c.name;
-    mcChildren.value = [...c.children];
-  } else {
-    mcChildren.value = [];
-  }
-  mcSchemeId.value = 0;
-  mcSchemeName.value = '';
-}
-
-/* 移除某子科目列 */
-function removeMcChild(idx: number) {
-  mcChildren.value.splice(idx, 1);
-  mcSchemeId.value = 0;
-  mcSchemeName.value = '';
-}
-
-/* 查询多栏账 */
-async function queryMultiColumn() {
-  if (!mcParentCode.value || mcChildren.value.length === 0) return;
-  mcLoading.value = true;
-  try {
-    mcResult.value = await api.getMultiColumnLedger({
-      parentCode: mcParentCode.value,
-      period: period.value,
-      childrenJson: JSON.stringify(mcChildren.value),
-    });
-  } catch (_) {
-    mcResult.value = { columns: [], rows: [], periodSummary: [] };
-  } finally { mcLoading.value = false; }
-}
-
-/* 表格合计行 */
-function mcGetSummaries(param: { columns: any[]; data: any[] }) {
-  const sums: (string | number)[] = [];
-  const { columns, data } = param;
-  columns.forEach((col, idx) => {
-    if (idx === 0) { sums[0] = '合计'; return; }
-    if (idx === 1) { sums[1] = ''; return; }
-    if (idx === 2) { sums[2] = ''; return; }
-    // 数值列：根据 label 判断是借方还是贷方
-    const label = col.label || '';
-    if (label.includes('借方')) {
-      const colIdx = Math.floor((idx - 3) / 2);
-      const val = data.reduce((sum: number, row: any) => sum + (row.cells?.[colIdx]?.debit || 0), 0);
-      sums[idx] = val > 0 ? val.toFixed(2) : '';
-    } else if (label.includes('贷方')) {
-      const colIdx = Math.floor((idx - 3) / 2);
-      const val = data.reduce((sum: number, row: any) => sum + (row.cells?.[colIdx]?.credit || 0), 0);
-      sums[idx] = val > 0 ? val.toFixed(2) : '';
-    } else if (label === '合计') {
-      const val = data.reduce((sum: number, row: any) => sum + mcRowTotal(row), 0);
-      sums[idx] = val.toFixed(2);
-    } else {
-      sums[idx] = '';
-    }
-  });
-  return sums;
-}
-
-/* 保存方案 */
-async function saveMcScheme() {
-  if (!mcSchemeName.value.trim()) { mcSchemeName.value = mcParentName.value + '多栏账'; }
-  try {
-    if (mcSchemeId.value > 0) {
-      await api.updateMultiColumnScheme({
-        id: mcSchemeId.value,
-        name: mcSchemeName.value,
-        parentCode: mcParentCode.value,
-        parentName: mcParentName.value,
-        childrenJson: JSON.stringify(mcChildren.value),
-      });
-    } else {
-      const s = await api.createMultiColumnScheme({
-        name: mcSchemeName.value,
-        parentCode: mcParentCode.value,
-        parentName: mcParentName.value,
-        childrenJson: JSON.stringify(mcChildren.value),
-      });
-      mcSchemeId.value = s.id;
-    }
-    await loadMcSchemes();
-    mcShowDialog.value = false;
-  } catch (e: any) { alert(e.message || '保存失败'); }
-}
-
-/* 删除方案 */
-async function deleteMcScheme() {
-  if (mcSchemeId.value <= 0) return;
-  if (!confirm('确定删除方案「' + mcSchemeName.value + '」？')) return;
-  try {
-    await api.deleteMultiColumnScheme(mcSchemeId.value);
-    mcSchemeId.value = 0;
-    mcSchemeName.value = '';
-    await loadMcSchemes();
-  } catch (e: any) { alert(e.message || '删除失败'); }
-}
-
-/* ========== 数量金额明细账 ========== */
-const qdSubjectCode = ref('');
-const qdSubjectName = ref('');
-const qdPeriod = ref('2026-06');
-const qdStartDate = ref('');
-const qdEndDate = ref('');
-const qdPage = ref(1);
-const qdPageSize = 50;
-const qdTotal = ref(0);
-const qdRows = shallowRef<QuantityDetailLedgerRow[]>([]);
-const qdLoading = ref(false);
-
-async function queryQtyDetail(resetPage = true) {
-  if (!qdSubjectCode.value) return;
-  if (resetPage) qdPage.value = 1;
-  qdLoading.value = true;
-  try {
-    const subj = allSubjects.value.find(s => s.code === qdSubjectCode.value);
-    qdSubjectName.value = subj?.name || '';
-    const result = await api.getQuantityDetailLedger({
-      subjectCode: qdSubjectCode.value,
-      period: qdPeriod.value,
-      startDate: qdStartDate.value || undefined,
-      endDate: qdEndDate.value || undefined,
-      page: qdPage.value,
-      pageSize: qdPageSize,
-    });
-    qdRows.value = result.rows;
-    qdTotal.value = result.total;
-  } finally { qdLoading.value = false; }
-}
-
-/* ========== 数量金额总账 ========== */
-const qgPeriodFrom = ref('2026-01');
-const qgPeriodTo = ref('2026-06');
-const qgSubjectCode = ref('');
-const qgLevel = ref('all');
-const qgRows = shallowRef<QuantityGeneralLedgerRow[]>([]);
-const qgLoading = ref(false);
-
-async function queryQtyGeneral() {
-  qgLoading.value = true;
-  try {
-    const result = await api.getQuantityGeneralLedger({
-      subjectCode: qgSubjectCode.value || undefined,
-      period: qgPeriodTo.value,
-    });
-    // 级次过滤
-    let rows = result.rows;
-    if (qgLevel.value === '1') {
-      rows = rows.filter(r => {
-        const s = allSubjects.value.find(x => x.code === r.code);
-        return s?.level === 1;
-      });
-    }
-    qgRows.value = rows;
-  } finally { qgLoading.value = false; }
-}
-
-/* ========== 核算项目余额表 ========== */
-const pbAuxTypes = ref<AuxProjectType[]>([]);
-const pbAuxValues = ref<AuxProjectValue[]>([]);
-const pbTypeId = ref<number | null>(null);
-const pbValueId = ref<number | null>(null);
-const pbPeriod = ref('2026-06');
-const pbRows = ref<AuxProjectBalanceRow[]>([]);
-const pbLoading = ref(false);
-
-async function loadAuxTypes() {
-  try { pbAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pbAuxTypes.value = []; }
-}
-async function onPbTypeChange() {
-  pbValueId.value = null;
-  if (pbTypeId.value) {
-    try { pbAuxValues.value = await api.listAuxProjectValues(pbTypeId.value); } catch (e) { console.warn('[LedgerView] 加载核算项目值失败:', e); pbAuxValues.value = []; }
-  } else {
-    pbAuxValues.value = [];
-  }
-}
-async function queryProjectBalance() {
-  pbLoading.value = true;
-  try {
-    pbRows.value = await api.getAuxProjectBalance({
-      auxTypeId: pbTypeId.value || undefined,
-      auxValueId: pbValueId.value || undefined,
-      period: pbPeriod.value,
-    });
-  } finally { pbLoading.value = false; }
-}
-
-/* ========== 核算项目明细账 ========== */
-const pdTypeId = ref<number | null>(null);
-const pdValueId = ref<number | null>(null);
-const pdAuxTypes = ref<AuxProjectType[]>([]);
-const pdAuxValues = ref<AuxProjectValue[]>([]);
-const pdPeriod = ref('2026-06');
-const pdStartDate = ref('');
-const pdEndDate = ref('');
-const pdPage = ref(1);
-const pdPageSize = 50;
-const pdTotal = ref(0);
-const pdRows = ref<AuxProjectDetailRow[]>([]);
-const pdLoading = ref(false);
-
-async function loadPdAuxTypes() {
-  try { pdAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pdAuxTypes.value = []; }
-}
-async function onPdTypeChange() {
-  pdValueId.value = null;
-  if (pdTypeId.value) {
-    try { pdAuxValues.value = await api.listAuxProjectValues(pdTypeId.value); } catch (e) { console.warn('[LedgerView] 加载核算项目值失败:', e); pdAuxValues.value = []; }
-  } else {
-    pdAuxValues.value = [];
-  }
-}
-async function queryProjectDetail(resetPage = true) {
-  if (resetPage) pdPage.value = 1;
-  pdLoading.value = true;
-  try {
-    const result = await api.getAuxProjectDetail({
-      auxTypeId: pdTypeId.value || undefined,
-      auxValueId: pdValueId.value || undefined,
-      period: pdPeriod.value,
-      startDate: pdStartDate.value || undefined,
-      endDate: pdEndDate.value || undefined,
-      page: pdPage.value,
-      pageSize: pdPageSize,
-    });
-    pdRows.value = result.rows;
-    pdTotal.value = result.total;
-  } finally { pdLoading.value = false; }
-}
-
-/* ========== 核算项目组合表 ========== */
-const pcTypeId = ref<number | null>(null);
-const pcAuxTypes = ref<AuxProjectType[]>([]);
-const pcData = ref<AuxProjectCombo | null>(null);
-const pcLoading = ref(false);
-
-async function loadPcAuxTypes() {
-  try { pcAuxTypes.value = await api.listAuxProjectTypes(); } catch (e) { console.warn('[LedgerView] 加载核算项目类型失败:', e); pcAuxTypes.value = []; }
-}
-async function queryProjectCombo() {
-  pcLoading.value = true;
-  try {
-    pcData.value = await api.getAuxProjectCombo({
-      period: period.value,
-      auxTypeId: pcTypeId.value || undefined,
-    });
-  } finally { pcLoading.value = false; }
-}
-
-/* ========== 总账 ========== */
-const generalPeriodFrom = ref('2026-01');
-const generalPeriodTo = ref('2026-06');
-const generalLevel = ref('1');       // '1' | 'all'
-const generalShowAux = ref(false);
-
-interface GeneralDisplayRow {
-  code: string;
-  name: string;
-  summary: string;
-  debit: number;
-  credit: number;
-  direction: string;
-  balance: number;
-  rowType: string; // 'opening' | 'periodTotal' | 'yearTotal'
-  groupIdx: number; // for rowspan
-}
-
-const generalRows = shallowRef<GeneralDisplayRow[]>([]);
-const generalLoading = ref(false);
-
-async function queryGeneralLedger() {
-  generalLoading.value = true;
-  try {
-    // 获取期初余额
-    const openings = await api.getOpeningBalances(generalPeriodFrom.value);
-    // 获取本期科目余额（含发生额）
-    const balance = await api.getSubjectBalance({ period: generalPeriodTo.value });
-    // 获取全年累计（不传 period 则汇总所有已过账凭证）
-    const yearBalances = await api.getSubjectBalance({});
-
-    // 按编码排序的科目（根据级次过滤）
-    const subjects = generalLevel.value === '1'
-      ? allSubjects.value.filter(s => s.level === 1)
-      : allSubjects.value.filter(s => s.level <= 2);
-    subjects.sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
-
-    const rows: GeneralDisplayRow[] = [];
-    let groupIdx = 0;
-
-    for (const subj of subjects) {
-      const opening = openings.find(o => o.subject_code === subj.code);
-      const openingBalance = opening
-        ? (Number(opening.debit) - Number(opening.credit))
-        : 0;
-
-      const bal = balance.find(b => b.code === subj.code);
-      const periodDebit = bal?.debitAmount || 0;
-      const periodCredit = bal?.creditAmount || 0;
-
-      // 本年累计（通过查询全年余额）
-      const yearBal = yearBalances.find(b => b.code === subj.code);
-      const yearDebit = yearBal?.debitAmount || 0;
-      const yearCredit = yearBal?.creditAmount || 0;
-
-      const isDebitDir = subj.direction === 'debit';
-
-      // 方向判定
-      const openingDir = isDebitDir
-        ? (openingBalance >= 0 ? '借' : '贷')
-        : (openingBalance >= 0 ? '贷' : '借');
-
-      const periodBalance = isDebitDir
-        ? openingBalance + periodDebit - periodCredit
-        : openingBalance + periodCredit - periodDebit;
-      const periodDir = periodBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借');
-
-      const yearBalance = isDebitDir
-        ? openingBalance + yearDebit - yearCredit
-        : openingBalance + yearCredit - yearDebit;
-      const yearDir = yearBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借');
-
-      rows.push({
-        code: subj.code, name: subj.name,
-        summary: '期初余额', debit: 0, credit: 0,
-        direction: openingDir, balance: Math.abs(openingBalance),
-        rowType: 'opening', groupIdx,
-      });
-      rows.push({
-        code: subj.code, name: subj.name,
-        summary: '本期合计', debit: periodDebit, credit: periodCredit,
-        direction: periodDir, balance: Math.abs(periodBalance),
-        rowType: 'periodTotal', groupIdx,
-      });
-      rows.push({
-        code: subj.code, name: subj.name,
-        summary: '本年累计', debit: yearDebit, credit: yearCredit,
-        direction: yearDir, balance: Math.abs(yearBalance),
-        rowType: 'yearTotal', groupIdx,
-      });
-      groupIdx++;
-    }
-
-    generalRows.value = rows;
-  } finally { generalLoading.value = false; }
-}
-
-/* 合并单元格：科目编码/名称按科目分组合并3行 */
-function generalSpanMethod({ row, column, rowIndex }: { row: GeneralDisplayRow; column: any; rowIndex: number }) {
-  const colProp = column.property;
-  if (colProp === 'code' || colProp === 'name') {
-    const idx = row.groupIdx;
-    // 找到该 group 的首行
-    const firstRow = generalRows.value.findIndex(r => r.groupIdx === idx);
-    if (firstRow === rowIndex) {
-      return { rowspan: 3, colspan: 1 };
-    }
-    return { rowspan: 0, colspan: 0 };
-  }
-  return { rowspan: 1, colspan: 1 };
-}
-
-/* ========== 明细账 ========== */
-const detailSubjectCode = ref('');
-const detailStartDate = ref('');
-const detailEndDate = ref('');
-const detailIncludeUnposted = ref(false);
-const detailPage = ref(1);
-const detailPageSize = 50;
-const detailTotal = ref(0);
-
-/* 构建带 children 的科目树 */
-function buildSubjectTree(subjects: FinanceSubject[]): SubjectTreeNode[] {
-  const ordered = buildTreeOrderedSubjects(subjects);
+/* ========== 科目树相关逻辑 ========== */
+const subjectTree = computed<SubjectTreeNode[]>(() => {
+  const list = allSubjects.value;
   const map = new Map<string, SubjectTreeNode>();
-  const roots: SubjectTreeNode[] = [];
+  const tree: SubjectTreeNode[] = [];
 
-  // 先创建所有节点
-  for (const s of ordered) {
+  list.forEach(s => {
     map.set(s.code, { ...s, children: [] });
-  }
-  // 建立父子关系
-  for (const s of ordered) {
+  });
+
+  list.forEach(s => {
     const node = map.get(s.code)!;
     if (s.parent_code && map.has(s.parent_code)) {
       map.get(s.parent_code)!.children.push(node);
-    } else {
-      // 一级科目 或 父科目不存在的二级科目 → 作为根节点展示
-      roots.push(node);
+    } else if (s.level === 1) {
+      tree.push(node);
     }
-  }
-  return roots;
-}
+  });
 
-const subjectTree = computed(() => buildSubjectTree(allSubjects.value));
+  const sortNodes = (nodes: SubjectTreeNode[]) => {
+    nodes.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    nodes.forEach(n => {
+      if (n.children.length > 0) {
+        sortNodes(n.children);
+      }
+    });
+  };
+  sortNodes(tree);
 
-/* 切换科目节点展开/折叠 */
-function toggleSubjectExpand(code: string) {
-  const keys = new Set(subjectExpandedKeys.value);
-  if (keys.has(code)) keys.delete(code);
-  else keys.add(code);
-  subjectExpandedKeys.value = keys;
-}
-
-/* 明细账行类型 */
-interface DetailDisplayRow {
-  type: 'carryForward' | 'opening' | 'entry' | 'periodTotal' | 'yearTotal' | 'carriedForward';
-  date: string;
-  voucher: string;
-  summary: string;
-  debit: number;
-  credit: number;
-  direction: string;
-  balance: number;
-}
-
-const detailRows = shallowRef<DetailDisplayRow[]>([]);
-const detailSubjectName = ref('');
-const detailCarryForward = ref(0);
-const detailCarriedForward = ref(0);
-
-/* 选中的科目 */
-const detailSubject = computed(() =>
-  allSubjects.value.find(s => s.code === detailSubjectCode.value)
-);
-
-onMounted(async () => {
-  const data = await api.bootstrap();
-  period.value = data.book.current_period;
-  // 根据当前账套期间初始化各子账簿期间的默认值
-  const cp = period.value;
-  const y = cp.slice(0, 4);
-  qdPeriod.value = cp;
-  pbPeriod.value = cp;
-  pdPeriod.value = cp;
-  qgPeriodFrom.value = `${y}-01`;
-  qgPeriodTo.value = cp;
-  generalPeriodFrom.value = `${y}-01`;
-  generalPeriodTo.value = cp;
-  allSubjects.value = data.subjects;
-  // 默认账簿为明细账时，自动加载第一个科目的明细
-  if (activeBook.value === 'detail' && subjectTree.value.length > 0) {
-    const first = subjectTree.value[0];
-    if (first) await selectSubjectForDetail(first.code);
-  } else {
-    await loadData();
-  }
+  return tree;
 });
 
-async function loadData() {
-  loading.value = true;
-  try {
-    if (activeBook.value === 'balance') {
-      const [balance, openings] = await Promise.all([
-        api.getSubjectBalance({ period: period.value }),
-        api.getOpeningBalances(period.value),
-      ]);
-      balanceListRaw.value = balance;
-      const map = new Map<string, { debit: number; credit: number }>();
-      openings.forEach(o => map.set(o.subject_code, { debit: Number(o.debit), credit: Number(o.credit) }));
-      balanceOpeningMap.value = map;
+const subjectTreeQuery = ref('');
+
+// 实时搜索匹配科目树（若子级匹配，父级级联保留）
+const filteredSubjectTree = computed<SubjectTreeNode[]>(() => {
+  if (!subjectTreeQuery.value.trim()) return subjectTree.value;
+
+  const query = subjectTreeQuery.value.trim().toLowerCase();
+
+  const filterNodes = (nodes: SubjectTreeNode[]): SubjectTreeNode[] => {
+    return nodes
+      .map(node => ({ ...node, children: filterNodes(node.children) }))
+      .filter(node =>
+        node.code.toLowerCase().includes(query) ||
+        node.name.toLowerCase().includes(query) ||
+        node.children.length > 0
+      );
+  };
+
+  return filterNodes(subjectTree.value);
+});
+
+// 当搜索关键字变化时，自动展开被匹配到的科目父级节点，方便用户快速定位点击
+watch(subjectTreeQuery, (newQuery) => {
+  if (!newQuery) return;
+  const query = newQuery.trim().toLowerCase();
+  
+  allSubjects.value.forEach(s => {
+    if (s.parent_code && (s.code.toLowerCase().includes(query) || s.name.toLowerCase().includes(query))) {
+      subjectExpandedKeys.value.add(s.parent_code);
+      // 支持三级科目向上两代自动级联展开一级
+      const parent = allSubjects.value.find(p => p.code === s.parent_code);
+      if (parent && parent.parent_code) {
+        subjectExpandedKeys.value.add(parent.parent_code);
+      }
     }
-  } finally { loading.value = false; }
+  });
+});
+
+function handleSearchEnter() {
+  const findFirstLeaf = (nodes: SubjectTreeNode[]): SubjectTreeNode | null => {
+    for (const node of nodes) {
+      if (!node.children || node.children.length === 0) {
+        return node;
+      }
+      const childLeaf = findFirstLeaf(node.children);
+      if (childLeaf) return childLeaf;
+    }
+    return null;
+  };
+
+  const firstLeaf = findFirstLeaf(filteredSubjectTree.value);
+  if (firstLeaf) {
+    selectSubject(firstLeaf.code);
+  }
 }
 
-/* ===== 通用 Excel 导出 ===== */
-async function downloadExcelBook(headers: string[], rows: Array<Record<string, string | number>>, filename: string) {
-  const columns = headers.map(h => ({ header: h, key: h, width: 18 }));
-  await downloadExcel(columns, rows, filename, 'Sheet1');
+async function loadSubjects() {
+  try {
+    const list = await api.listSubjects();
+    allSubjects.value = list.filter(s => s.enabled);
+    if (!selectedSubjectCode.value && allSubjects.value.length > 0) {
+      // 默认选中第一个明细科目
+      const leaf = allSubjects.value.find(s => !allSubjects.value.some(other => other.parent_code === s.code));
+      if (leaf) selectedSubjectCode.value = leaf.code;
+    }
+  } catch (e: any) {
+    ElMessage.error(e.message || '加载科目失败');
+  }
 }
 
-function exportCurrentBook() {
-  const bookKey = activeBook.value;
-  const now = new Date();
-  const ts = `${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
-
-  // 多栏账
-  if (bookKey === 'multiColumn' && mcResult.value) {
-    const { columns, rows } = mcResult.value;
-    const headers = ['日期', '凭证字号', '摘要', ...columns.map((c) => `${c.code} ${c.name}(借)`), ...columns.map((c) => `${c.code} ${c.name}(贷)`), '借方合计', '贷方合计', '余额'];
-    const exportRows = rows.map((r) => {
-      const debits = r.cells.map((cell) => cell.debit);
-      const credits = r.cells.map((cell) => cell.credit);
-      const totalDebit = debits.reduce((s, v) => s + v, 0);
-      const totalCredit = credits.reduce((s, v) => s + v, 0);
-      return {
-        '日期': r.voucher_date, '凭证字号': `${r.voucher_word}-${r.voucher_no}`, '摘要': r.summary || '',
-        ...Object.fromEntries(columns.map((c, i) => [`${c.code} ${c.name}(借)`, debits[i] || 0])),
-        ...Object.fromEntries(columns.map((c, i) => [`${c.code} ${c.name}(贷)`, credits[i] || 0])),
-        '借方合计': totalDebit, '贷方合计': totalCredit, '余额': totalDebit - totalCredit,
-      };
-    });
-    downloadExcelBook(headers, exportRows, `多栏账_${mcParentCode.value}_${ts}.xlsx`);
-    return;
-  }
-
-  // 数量金额明细账
-  if (bookKey === 'qtyDetail' && qdRows.value.length > 0) {
-    const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '数量', '单价', '单位'];
-    const rows = qdRows.value.map(r => ({
-      '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word}-${r.voucher_no}`, '摘要': r.summary || '',
-      '借方金额': r.debit, '贷方金额': r.credit, '数量': r.quantity, '单价': r.unit_price, '单位': r.unit || '',
-    }));
-    downloadExcelBook(headers, rows, `数量金额明细账_${qdSubjectCode.value}_${ts}.xlsx`);
-    return;
-  }
-
-  // 数量金额总账
-  if (bookKey === 'qtyGeneral' && qgRows.value.length > 0) {
-    const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '数量(收)', '数量(付)', '净数量', '单位'];
-    const rows = qgRows.value.map(r => ({
-      '科目编码': r.code, '科目名称': r.name,
-      '借方金额': r.total_debit, '贷方金额': r.total_credit,
-      '数量(收)': r.in_quantity, '数量(付)': r.out_quantity, '净数量': r.net_quantity,
-      '单位': r.unit || '',
-    }));
-    downloadExcelBook(headers, rows, `数量金额总账_${ts}.xlsx`);
-    return;
-  }
-
-  // 核算项目余额表
-  if (bookKey === 'projectBalance' && pbRows.value.length > 0) {
-    const headers = ['科目编码', '科目名称', '借方金额', '贷方金额', '余额方向', '余额'];
-    const rows = pbRows.value.map(r => ({
-      '科目编码': r.subject_code, '科目名称': r.subject_name,
-      '借方金额': r.debit_amount, '贷方金额': r.credit_amount,
-      '余额方向': r.debit_amount >= r.credit_amount ? '借' : '贷',
-      '余额': Math.abs(r.debit_amount - r.credit_amount),
-    }));
-    downloadExcelBook(headers, rows, `核算项目余额表_${ts}.xlsx`);
-    return;
-  }
-
-  // 核算项目明细账
-  if (bookKey === 'projectDetail' && pdRows.value.length > 0) {
-    const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '余额方向', '余额'];
-    const rows = pdRows.value.map(r => ({
-      '日期': r.voucher_date || '', '凭证字号': `${r.voucher_word || ''}-${r.voucher_no || ''}`,
-      '摘要': r.summary || '', '借方金额': r.debit, '贷方金额': r.credit,
-      '余额方向': (r.debit || 0) >= (r.credit || 0) ? '借' : '贷',
-      '余额': Math.abs((r.debit || 0) - (r.credit || 0)),
-    }));
-    downloadExcelBook(headers, rows, `核算项目明细账_${ts}.xlsx`);
-    return;
-  }
-
-  // 核算项目组合表
-  if (bookKey === 'projectCombo' && pcData.value && pcData.value.rows.length > 0) {
-    const d = pcData.value;
-    const headers = ['科目编码', '科目名称', ...d.columns.flatMap(c => [`${c.value_code} ${c.value_name}(借)`, `${c.value_code} ${c.value_name}(贷)`])];
-    const rows = d.rows.map(r => {
-      const row: Record<string, string | number> = { '科目编码': r.subject_code, '科目名称': r.subject_name };
-      d.columns.forEach((c, i) => {
-        row[`${c.value_code} ${c.value_name}(借)`] = r.cells[i].debit || 0;
-        row[`${c.value_code} ${c.value_name}(贷)`] = r.cells[i].credit || 0;
-      });
-      return row;
-    });
-    downloadExcelBook(headers, rows, `核算项目组合表_${ts}.xlsx`);
-    return;
-  }
-
-  ElMessage.warning('当前表格无数据可导出');
+function selectSubject(code: string) {
+  selectedSubjectCode.value = code;
 }
 
-// ponytail: 切换账簿，category 由 bookGroups key 自动推导
+function toggleExpand(code: string) {
+  if (subjectExpandedKeys.value.has(code)) {
+    subjectExpandedKeys.value.delete(code);
+  } else {
+    subjectExpandedKeys.value.add(code);
+  }
+}
+
 function selectBook(key: string) {
   activeBook.value = key;
-  detailPage.value = 1;
-  if (key === 'balance') loadData();
-  if (key === 'general') queryGeneralLedger();
-  if (key === 'detail' && detailSubjectCode.value) queryDetailLedger();
-  if (key === 'multiColumn') { loadMcSchemes(); if (mcParentCode.value) queryMultiColumn(); }
-  if (key === 'qtyDetail' && qdSubjectCode.value) queryQtyDetail();
-  if (key === 'qtyGeneral') { qgSubjectCode.value = ''; queryQtyGeneral(); }
-  if (key === 'projectBalance') loadAuxTypes();
-  if (key === 'projectDetail') loadPdAuxTypes();
-  if (key === 'trialBalance') queryTrialBalance();
-  if (key === 'projectCombo') { pcData.value = null; loadPcAuxTypes(); }
 }
 
-/* 选择科目查询明细账 */
-async function selectSubjectForDetail(code: string) {
-  detailSubjectCode.value = code;
-  await queryDetailLedger();
-}
-
-/* 科目树当前高亮的科目编码（兼容明细账/数量金额明细账） */
-const treeActiveCode = computed(() =>
-  activeBook.value === 'qtyDetail' ? qdSubjectCode.value : detailSubjectCode.value
-);
-
-/* 科目树点击：根据当前账簿分发 */
-function onTreeSubjectClick(code: string) {
-  if (activeBook.value === 'qtyDetail') {
-    qdSubjectCode.value = code;
-    queryQtyDetail();
-  } else {
-    selectSubjectForDetail(code);
-  }
-}
-
-/* 查询明细账 */
-async function queryDetailLedger(resetPage = true) {
-  if (!detailSubjectCode.value) return;
-  if (resetPage) detailPage.value = 1;
-  loading.value = true;
-  try {
-    const subj = detailSubject.value;
-    detailSubjectName.value = subj?.name || '';
-
-    // 查询期初余额
-    const openings = await api.getOpeningBalances(period.value);
-    const opening = openings.find(o => o.subject_code === detailSubjectCode.value);
-    const openingBalance = opening
-      ? (Number(opening.debit) - Number(opening.credit))
-      : 0;
-
-    // 查询本期明细（带翻页）
-    const result: DetailLedgerResult = await api.getDetailLedger({
-      subjectCode: detailSubjectCode.value,
-      period: period.value,
-      startDate: detailStartDate.value || undefined,
-      endDate: detailEndDate.value || undefined,
-      page: detailPage.value,
-      pageSize: detailPageSize,
-    });
-    detailTotal.value = result.total;
-    detailCarryForward.value = result.carryForward || 0;
-    detailCarriedForward.value = result.carriedForward || 0;
-
-    const isDebitDir = subj?.direction === 'debit';
-    const rows = result.rows;
-    const display: DetailDisplayRow[] = [];
-    let runningBalance = openingBalance;
-
-    // 确定期初余额方向
-    const openingDir = isDebitDir
-      ? (openingBalance >= 0 ? '借' : '贷')
-      : (openingBalance >= 0 ? '贷' : '借');
-
-    // 承前页行（非第一页时显示）
-    if (detailPage.value > 1 && result.carryForward !== undefined) {
-      const cfBalance = result.carryForward;
-      const cfDir = cfBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借');
-      runningBalance = cfBalance;
-      display.push({
-        type: 'carryForward',
-        date: '', voucher: '', summary: '承前页',
-        debit: 0, credit: 0,
-        direction: cfDir,
-        balance: Math.abs(cfBalance),
-      });
-    } else {
-      // 期初余额行（第一页）
-      display.push({
-        type: 'opening',
-        date: '', voucher: '', summary: '期初余额',
-        debit: 0, credit: 0,
-        direction: openingDir,
-        balance: Math.abs(openingBalance),
-      });
-    }
-
-    // 本期发生额累计
-    let periodDebit = 0;
-    let periodCredit = 0;
-
-    // 逐笔分录
-    for (const r of rows) {
-      const d = Number(r.debit || 0);
-      const c = Number(r.credit || 0);
-      periodDebit += d;
-      periodCredit += c;
-
-      if (isDebitDir) {
-        runningBalance = runningBalance + d - c;
-      } else {
-        runningBalance = runningBalance + c - d;
-      }
-
-      const dir = runningBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借');
-
-      display.push({
-        type: 'entry',
-        date: r.voucher_date,
-        voucher: `${r.voucher_word}-${r.voucher_no}`,
-        summary: r.summary,
-        debit: d,
-        credit: c,
-        direction: dir,
-        balance: Math.abs(runningBalance),
-      });
-    }
-
-    // 本年累计（从年初至今）
-    const yearStart = period.value.substring(0, 4) + '-01';
-    const yearResult = await api.getDetailLedger({
-      subjectCode: detailSubjectCode.value,
-      startDate: yearStart + '-01',
-      endDate: period.value + '-31',
-    });
-    let yearDebit = 0;
-    let yearCredit = 0;
-    for (const r of yearResult.rows) {
-      yearDebit += Number(r.debit || 0);
-      yearCredit += Number(r.credit || 0);
-    }
-
-    // 本期合计行
-    display.push({
-      type: 'periodTotal',
-      date: '', voucher: '', summary: '本期合计',
-      debit: periodDebit, credit: periodCredit,
-      direction: '',
-      balance: Math.abs(runningBalance),
-    });
-
-    // 本年累计行
-    const yearBalance = isDebitDir
-      ? openingBalance + yearDebit - yearCredit
-      : openingBalance + yearCredit - yearDebit;
-    display.push({
-      type: 'yearTotal',
-      date: '', voucher: '', summary: '本年累计',
-      debit: yearDebit, credit: yearCredit,
-      direction: runningBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借'),
-      balance: Math.abs(yearBalance),
-    });
-
-    // 过次页行（非最后一页时显示）
-    if (result.carriedForward !== undefined && detailPage.value * detailPageSize < detailTotal.value) {
-      const cfBalance = result.carriedForward;
-      const cfDir = cfBalance >= 0
-        ? (isDebitDir ? '借' : '贷')
-        : (isDebitDir ? '贷' : '借');
-      display.push({
-        type: 'carriedForward',
-        date: '', voucher: '', summary: '过次页',
-        debit: 0, credit: 0,
-        direction: cfDir,
-        balance: Math.abs(cfBalance),
-      });
-    }
-
-    detailRows.value = display;
-  } finally { loading.value = false; }
-}
-
-/* 切换账簿时自动加载数据 */
-watch(activeBook, (val) => {
-  detailPage.value = 1;
-  if (val === 'detail' && allSubjects.value.length > 0 && !detailSubjectCode.value) {
-    const first = subjectTree.value[0];
-    if (first) selectSubjectForDetail(first.code);
-  }
-  if (val === 'detail' && detailSubjectCode.value) queryDetailLedger();
-  if (val === 'qtyDetail' && allSubjects.value.length > 0 && !qdSubjectCode.value) {
-    const first = subjectTree.value[0];
-    if (first) { qdSubjectCode.value = first.code; queryQtyDetail(); }
-  }
-  if (val === 'general') queryGeneralLedger();
-  if (val === 'balance') loadData();
-  if (val === 'multiColumn') loadMcSchemes();
-  if (val === 'qtyDetail' && qdSubjectCode.value) queryQtyDetail();
-  if (val === 'qtyGeneral') queryQtyGeneral();
-  if (val === 'projectBalance') loadAuxTypes();
-  if (val === 'projectDetail') loadPdAuxTypes();
-  if (val === 'trialBalance') queryTrialBalance();
-  if (val === 'projectCombo') { pcData.value = null; loadPcAuxTypes(); }
+watch(activeBook, () => {
+  // 切换账簿时，重置科目树选择或执行相关初始化
 });
 
-/* ---- 打印 ---- */
-function handlePrint() {
-  window.print();
-}
-
-/* ---- 导出 Excel 通用工具 ---- */
-async function exportExcelSheet(headers: string[], rows: string[][], bookName: string) {
-  const columns = headers.map(h => ({ header: h, key: h, width: 18 }));
-  const objRows = rows.map(row => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => { obj[h] = String(row[i] ?? ''); });
-    return obj;
-  });
-  const now = new Date();
-  const month = period.value;
-  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-  await downloadExcel(columns, objRows, `${bookName}_${month}_${time}.xlsx`, bookName);
-}
-
-/* ---- 明细账导出 ---- */
-function handleExportDetail() {
-  if (detailRows.value.length === 0) {
-    ElMessage.warning('暂无数据可导出');
-    return;
-  }
-  const headers = ['日期', '凭证字号', '摘要', '借方金额', '贷方金额', '方向', '余额'];
-  const rows = detailRows.value.map(r => [
-    r.date,
-    r.voucher,
-    r.summary,
-    r.debit > 0 ? r.debit.toFixed(2) : '',
-    r.credit > 0 ? r.credit.toFixed(2) : '',
-    r.direction,
-    r.balance.toFixed(2),
-  ]);
-  exportExcelSheet(headers, rows, `明细账_${detailSubjectCode.value || '未选'}`);
-  ElMessage.success('明细账导出成功');
-}
-
-/* ---- 总账导出 ---- */
-function handleExportGeneral() {
-  if (generalRows.value.length === 0) {
-    ElMessage.warning('暂无数据可导出');
-    return;
-  }
-  const headers = ['科目编码', '科目名称', '摘要', '借方金额', '贷方金额', '方向', '余额'];
-  const rows = generalRows.value.map(r => [
-    r.code,
-    r.name,
-    r.summary,
-    r.debit > 0 ? r.debit.toFixed(2) : '',
-    r.credit > 0 ? r.credit.toFixed(2) : '',
-    r.direction,
-    r.balance.toFixed(2),
-  ]);
-  exportExcelSheet(headers, rows, '总账');
-  ElMessage.success('总账导出成功');
-}
-
-/* ---- 科目余额表导出 ---- */
-function handleExportBalance() {
-  if (balanceList.value.length === 0) {
-    ElMessage.warning('暂无数据可导出');
-    return;
-  }
-  const headers = ['科目编码', '科目名称', '方向', '期初余额', '借方发生额', '贷方发生额', '期末余额'];
-  const rows = balanceList.value.map(r => [
-    r.code,
-    r.name,
-    r.directionLabel,
-    r.openingBalance !== 0 ? r.openingBalance.toFixed(2) : '',
-    r.debitAmount !== 0 ? r.debitAmount.toFixed(2) : '',
-    r.creditAmount !== 0 ? r.creditAmount.toFixed(2) : '',
-    r.endingBalance !== 0 ? r.endingBalance.toFixed(2) : '',
-  ]);
-  exportExcelSheet(headers, rows, '科目余额表');
-  ElMessage.success('科目余额表导出成功');
-}
-
-/* ---- 试算平衡表导出 ---- */
-function handleExportTrialBalance() {
-  if (!tbData.value || tbData.value.rows.length === 0) {
-    ElMessage.warning('暂无数据可导出');
-    return;
-  }
-  const headers = ['科目编码', '科目名称', '期初余额(借)', '期初余额(贷)', '本期借方', '本期贷方', '期末余额(借)', '期末余额(贷)'];
-  const rows = tbData.value.rows.map(r => [
-    r.code,
-    r.name,
-    r.openingDebit > 0 ? r.openingDebit.toFixed(2) : '',
-    r.openingCredit > 0 ? r.openingCredit.toFixed(2) : '',
-    r.debitAmount > 0 ? r.debitAmount.toFixed(2) : '',
-    r.creditAmount > 0 ? r.creditAmount.toFixed(2) : '',
-    r.endingDebit > 0 ? r.endingDebit.toFixed(2) : '',
-    r.endingCredit > 0 ? r.endingCredit.toFixed(2) : '',
-  ]);
-  // 添加合计行
-  rows.push([
-    '合计', '',
-    tbData.value.totals.openingDebit.toFixed(2),
-    tbData.value.totals.openingCredit.toFixed(2),
-    tbData.value.totals.amountDebit.toFixed(2),
-    tbData.value.totals.amountCredit.toFixed(2),
-    tbData.value.totals.endingDebit.toFixed(2),
-    tbData.value.totals.endingCredit.toFixed(2),
-  ]);
-  exportExcelSheet(headers, rows, '试算平衡表');
-  ElMessage.success('试算平衡表导出成功');
-}
+onMounted(() => {
+  loadSubjects();
+});
 </script>
 
 <template>
-  <div class="page-wrap">
-    <div class="page-header">
-      <div class="ph-left">
-        <span class="ph-icon" v-html="bookIcons[activeBook]"></span>
-        <div>
-          <h2 class="ph-title">账簿查询</h2>
-          <p class="ph-desc">{{ currentBookLabel }}</p>
-        </div>
-      </div>
-      <div class="ph-right">
-        <el-tag size="small" type="info">{{ period }}</el-tag>
-      </div>
-    </div>
-
-    <!-- 账簿Tab选择器 — rpt-tab 风格，单行自动换行 -->
-    <div class="book-tabs">
+  <div class="ledger-view">
+    <!-- 顶部单行横向 Tab -->
+    <div class="bt-tab-row">
       <button
         v-for="item in allBookItems"
         :key="item.key"
@@ -1156,947 +213,285 @@ function handleExportTrialBalance() {
     </div>
 
     <div class="ledger-layout">
-      <!-- 中间：查询条件 + 数据区域 -->
-      <div class="ledger-content">
-        <!-- ==================== 明细账 ==================== -->
-        <template v-if="activeBook === 'detail'">
-          <!-- 查询条件栏 -->
-          <div class="query-bar">
-            <div class="query-left">
-              <el-select v-model="period" size="small" style="width:110px">
-                <el-option v-for="p in [period]" :key="p" :label="p" :value="p" />
-              </el-select>
-              <el-date-picker v-model="detailStartDate" type="date" placeholder="开始日期" size="small" style="width:125px" value-format="YYYY-MM-DD" clearable />
-              <span class="query-sep">-</span>
-              <el-date-picker v-model="detailEndDate" type="date" placeholder="结束日期" size="small" style="width:125px" value-format="YYYY-MM-DD" clearable />
-              <el-checkbox v-model="detailIncludeUnposted" size="small">包含未过账</el-checkbox>
-            </div>
-            <div class="query-right">
-              <el-button type="primary" size="small" @click="queryDetailLedger()">查询</el-button>
-              <el-button size="small" @click="detailStartDate='';detailEndDate='';detailIncludeUnposted=false;queryDetailLedger()">重置</el-button>
-              <el-button size="small" @click="handlePrint">打印</el-button>
-              <el-button size="small" @click="handleExportDetail">导出</el-button>
-            </div>
-          </div>
-
-          <!-- 科目信息头 -->
-          <div class="subject-header">
-            <span class="subject-code">{{ detailSubjectCode }}</span>
-            <span class="subject-name">{{ detailSubjectName }}</span>
-            <el-tag v-if="detailSubject" :type="detailSubject.direction === 'debit' ? 'success' : 'danger'" size="small" class="subject-dir-tag">
-              {{ detailSubject.direction === 'debit' ? '借方科目' : '贷方科目' }}
-            </el-tag>
-          </div>
-
-          <!-- 明细账表格 -->
-          <div class="data-panel" v-loading="loading">
-            <el-table :data="detailRows" border stripe size="small" max-height="480" :show-header="true">
-              <el-table-column prop="date" label="日期" min-width="90" align="center" />
-              <el-table-column prop="voucher" label="凭证字号" min-width="95" align="center" />
-              <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <span :class="{ 'summary-highlight': row.type !== 'entry' }">
-                    {{ row.summary }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column label="借方" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.debit !== 0" class="money">{{ row.debit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="贷方" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.credit !== 0" class="money">{{ row.credit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="方向" width="48" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.direction" :class="['dir-tag', row.direction === '借' ? 'dir-debit' : 'dir-credit']">
-                    {{ row.direction }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column label="余额" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span class="money">{{ row.balance.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <!-- 分页 -->
-            <div class="pagination-bar" v-if="detailTotal > detailPageSize">
-              <el-pagination
-                v-model:current-page="detailPage"
-                :page-size="detailPageSize"
-                :total="detailTotal"
-                layout="total, prev, pager, next"
-                size="small"
-                @current-change="queryDetailLedger(false)"
-              />
-            </div>
-          </div>
-        </template>
-
-        <!-- ==================== 总账 ==================== -->
-        <template v-if="activeBook === 'general'">
-          <div class="query-bar">
-            <div class="query-left">
-              <span class="query-label">期间：</span>
-              <el-select v-model="generalPeriodFrom" size="small" style="width:110px">
-                <el-option v-for="p in [generalPeriodFrom]" :key="p" :label="p" :value="p" />
-              </el-select>
-              <span class="query-sep">至</span>
-              <el-select v-model="generalPeriodTo" size="small" style="width:110px">
-                <el-option v-for="p in [generalPeriodTo]" :key="p" :label="p" :value="p" />
-              </el-select>
-              <el-radio-group v-model="generalLevel" size="small">
-                <el-radio-button value="1">一级</el-radio-button>
-                <el-radio-button value="all">全部</el-radio-button>
-              </el-radio-group>
-              <el-checkbox v-model="generalShowAux" size="small">显示辅助核算</el-checkbox>
-            </div>
-            <div class="query-right">
-              <el-button type="primary" size="small" @click="queryGeneralLedger">查询</el-button>
-              <el-button size="small">刷新</el-button>
-              <el-button size="small" @click="handlePrint">打印</el-button>
-              <el-button size="small" @click="handleExportGeneral">导出</el-button>
-            </div>
-          </div>
-
-          <div class="data-panel" v-loading="generalLoading">
-            <el-table
-              :data="generalRows" border stripe size="small" max-height="480"
-              :span-method="generalSpanMethod"
-            >
-              <el-table-column prop="code" label="科目编码" min-width="85" align="center" />
-              <el-table-column prop="name" label="科目名称" min-width="140" align="center" show-overflow-tooltip />
-              <el-table-column prop="summary" label="摘要" min-width="130" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <span :class="{ 'summary-highlight': row.rowType !== 'opening' }">{{ row.summary }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="借方" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.debit !== 0" class="money">{{ row.debit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="贷方" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.credit !== 0" class="money">{{ row.credit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="方向" width="48" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.direction" :class="['dir-tag', row.direction === '借' ? 'dir-debit' : 'dir-credit']">
-                    {{ row.direction }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column label="余额" min-width="110" align="center">
-                <template #default="{ row }">
-                  <span class="money">{{ row.balance.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </template>
-
-        <!-- ==================== 科目余额表 ==================== -->
-        <template v-if="activeBook === 'balance'">
-          <div class="query-bar">
-            <div class="query-left">
-              <el-select v-model="period" size="small" style="width:110px">
-                <el-option v-for="p in [period]" :key="p" :label="p" :value="p" />
-              </el-select>
-              <el-radio-group v-model="balanceLevel" size="small">
-                <el-radio-button value="all">全部</el-radio-button>
-                <el-radio-button value="1">一级科目</el-radio-button>
-              </el-radio-group>
-              <el-checkbox v-model="balanceHideZero" size="small">余额为零不显示</el-checkbox>
-            </div>
-            <div class="query-right">
-              <el-button type="primary" size="small" @click="loadData">查询</el-button>
-              <el-button size="small" @click="handleExportBalance">导出</el-button>
-              <el-button size="small" @click="handlePrint">打印</el-button>
-            </div>
-          </div>
-          <div class="data-panel" v-loading="loading">
-            <el-table :data="balanceList" border stripe size="small" max-height="520">
-              <el-table-column prop="code" label="科目编码" min-width="95" align="center" />
-              <el-table-column prop="name" label="科目名称" min-width="150" show-overflow-tooltip />
-              <el-table-column label="方向" width="48" align="center">
-                <template #default="{ row }">
-                  <span :class="['dir-tag', row.directionLabel === '借' ? 'dir-debit' : 'dir-credit']">
-                    {{ row.directionLabel }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column label="期初余额" align="center" min-width="110">
-                <template #default="{ row }">
-                  <span v-if="row.openingBalance !== 0" class="money">{{ row.openingBalance.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="借方发生额" align="center" min-width="110">
-                <template #default="{ row }">
-                  <span v-if="row.debitAmount !== 0" class="money">{{ row.debitAmount.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="贷方发生额" align="center" min-width="110">
-                <template #default="{ row }">
-                  <span v-if="row.creditAmount !== 0" class="money">{{ row.creditAmount.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="期末余额" align="center" min-width="110">
-                <template #default="{ row }">
-                  <span v-if="row.endingBalance !== 0" class="money">{{ row.endingBalance.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div class="summary-bar">
-              合计：期初 {{ balanceSummary.openingDebit.toFixed(2) }}（借）
-              | 借方发生额 {{ balanceSummary.debitAmt.toFixed(2) }}
-              | 贷方发生额 {{ balanceSummary.creditAmt.toFixed(2) }}
-              | 期末 {{ balanceSummary.endingDebit.toFixed(2) }}
-            </div>
-          </div>
-        </template>
-
-        <!-- ==================== 试算平衡表 ==================== -->
-        <template v-if="activeBook === 'trialBalance'">
-          <div class="query-bar">
-            <div class="query-left">
-              <el-select v-model="period" size="small" style="width:110px">
-                <el-option v-for="p in [period]" :key="p" :label="p" :value="p" />
-              </el-select>
-            </div>
-            <div class="query-right">
-              <el-button type="primary" size="small" @click="queryTrialBalance">查询</el-button>
-              <el-button size="small" @click="handleExportTrialBalance">导出</el-button>
-              <el-button size="small" @click="handlePrint">打印</el-button>
-            </div>
-          </div>
-
-          <div class="data-panel" v-loading="tbLoading">
-            <el-table v-if="tbData" :data="tbData.rows" border stripe size="small" max-height="480">
-              <el-table-column prop="code" label="科目编码" min-width="95" align="center" />
-              <el-table-column prop="name" label="科目名称" min-width="150" show-overflow-tooltip />
-              <el-table-column label="期初余额(借)" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.openingDebit > 0" class="money">{{ row.openingDebit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="期初余额(贷)" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.openingCredit > 0" class="money">{{ row.openingCredit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="本期借方" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.debitAmount > 0" class="money">{{ row.debitAmount.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="本期贷方" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.creditAmount > 0" class="money">{{ row.creditAmount.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="期末余额(借)" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.endingDebit > 0" class="money">{{ row.endingDebit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="期末余额(贷)" align="center" min-width="105">
-                <template #default="{ row }">
-                  <span v-if="row.endingCredit > 0" class="money">{{ row.endingCredit.toFixed(2) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div v-else-if="!tbLoading" class="mc-empty"><p>点击「查询」按钮加载试算平衡表</p></div>
-
-            <!-- 合计行 -->
-            <div v-if="tbData" class="summary-bar">
-              合计：
-              期初 {{ tbData.totals.openingDebit.toFixed(2) }}（借） / {{ tbData.totals.openingCredit.toFixed(2) }}（贷）
-              | 本期 {{ tbData.totals.amountDebit.toFixed(2) }}（借） / {{ tbData.totals.amountCredit.toFixed(2) }}（贷）
-              | 期末 {{ tbData.totals.endingDebit.toFixed(2) }}（借） / {{ tbData.totals.endingCredit.toFixed(2) }}（贷）
-              <span :class="tbBalanced ? 'tb-balanced' : 'tb-unbalanced'" style="margin-left:8px">
-                {{ tbBalanced ? '✓ 试算平衡' : '✗ 试算不平衡' }}
-              </span>
-            </div>
-          </div>
-        </template>
-
-        <!-- ==================== 多栏账 ==================== -->
-        <template v-if="activeBook === 'multiColumn'">
-          <div class="data-panel" v-loading="mcLoading">
-            <!-- 工具栏 -->
-            <div class="mc-toolbar">
-              <div class="mc-toolbar-row">
-                <span class="toolbar-label">会计期间</span>
-                <el-select v-model="period" size="small" style="width:120px" @change="queryMultiColumn">
-                  <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-                </el-select>
-                <span class="toolbar-label" style="margin-left:16px">上级科目</span>
-                <el-select v-model="mcParentCode" size="small" style="width:220px" placeholder="选择上级科目" @change="onMcParentChange">
-                  <el-option v-for="p in mcParentCandidates" :key="p.code" :label="p.code + ' ' + p.name" :value="p.code" />
-                </el-select>
-                <span class="toolbar-label" style="margin-left:16px">方案</span>
-                <el-select v-model="mcSchemeId" size="small" style="width:180px" placeholder="选择已保存方案" @change="selectMcScheme">
-                  <el-option v-for="s in mcSchemes" :key="s.id" :label="s.name" :value="s.id" />
-                </el-select>
-                <el-button size="small" style="margin-left:8px" @click="mcShowDialog = true; mcSchemeName = mcSchemeId > 0 ? mcSchemes.find(s => s.id === mcSchemeId)?.name || '' : ''">保存方案</el-button>
-                <el-button v-if="mcSchemeId > 0" size="small" type="danger" plain @click="deleteMcScheme">删除方案</el-button>
-                <el-button size="small" type="primary" style="margin-left:auto" @click="queryMultiColumn" :disabled="!mcParentCode || mcChildren.length === 0">查询</el-button>
-                <el-button size="small" @click="exportCurrentBook" :disabled="!mcResult || mcLoading">导出</el-button>
+      <!-- 左侧：科目树（仅在明细账等单科目查询时显示） -->
+      <div v-if="showSubjectTree" class="ledger-sidebar">
+        <div class="sidebar-title">科目导航</div>
+        <div class="sidebar-search">
+          <el-input
+            v-model="subjectTreeQuery"
+            placeholder="输入编码/名称过滤科目"
+            size="small"
+            clearable
+            :prefix-icon="Search"
+            @keyup.enter="handleSearchEnter"
+          />
+        </div>
+        <div class="subject-tree-wrapper">
+          <div class="subject-tree-list">
+            <!-- 递归科目树渲染 -->
+            <template v-for="node in filteredSubjectTree" :key="node.code">
+              <div
+                :class="['tree-node', { leaf: !node.children || node.children.length === 0, active: selectedSubjectCode === node.code }]"
+                :style="{ paddingLeft: (node.level - 1) * 12 + 'px' }"
+                @click="selectSubject(node.code)"
+              >
+                <span
+                  v-if="node.children && node.children.length > 0"
+                  class="expand-icon"
+                  @click.stop="toggleExpand(node.code)"
+                >
+                  {{ subjectExpandedKeys.has(node.code) ? '▼' : '▶' }}
+                </span>
+                <span v-else class="expand-placeholder"></span>
+                <span class="node-code">{{ node.code }}</span>
+                <span class="node-name" :title="node.name">{{ node.name }}</span>
               </div>
-            </div>
-
-            <!-- 子科目列预览 -->
-            <div v-if="mcChildren.length > 0" class="mc-column-tags">
-              <span class="mc-tag-label">分析列：</span>
-              <el-tag
-                v-for="(child, idx) in mcChildren"
-                :key="child.code"
-                closable
-                size="small"
-                style="margin:2px 4px"
-                @close="removeMcChild(idx)"
-              >{{ child.code }} {{ child.name }}</el-tag>
-            </div>
-
-            <!-- 数据表格 -->
-            <div v-if="mcResult.rows.length > 0" class="mc-table-wrap">
-              <el-table :data="mcResult.rows" border stripe size="small" :max-height="400" show-summary :summary-method="mcGetSummaries">
-                <el-table-column prop="voucher_date" label="日期" min-width="90" fixed />
-                <el-table-column label="凭证字号" min-width="110" fixed>
-                  <template #default="{ row }">{{ row.voucher_word }}-{{ row.voucher_no }}</template>
-                </el-table-column>
-                <el-table-column prop="summary" label="摘要" min-width="140" show-overflow-tooltip />
-                <template v-for="(col, ci) in mcColumns" :key="col.code">
-                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="center" min-width="110">
-                    <template #default="{ row }">{{ row.cells[ci].debit > 0 ? row.cells[ci].debit.toFixed(2) : '' }}</template>
-                  </el-table-column>
-                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="center" min-width="110">
-                    <template #default="{ row }">{{ row.cells[ci].credit > 0 ? row.cells[ci].credit.toFixed(2) : '' }}</template>
-                  </el-table-column>
+              <!-- 子级渲染 -->
+              <div v-if="node.children && node.children.length > 0 && subjectExpandedKeys.has(node.code)" class="tree-children">
+                <template v-for="subNode in node.children" :key="subNode.code">
+                  <div
+                    :class="['tree-node', { leaf: !subNode.children || subNode.children.length === 0, active: selectedSubjectCode === subNode.code }]"
+                    :style="{ paddingLeft: (subNode.level - 1) * 12 + 'px' }"
+                    @click="selectSubject(subNode.code)"
+                  >
+                    <span
+                      v-if="subNode.children && subNode.children.length > 0"
+                      class="expand-icon"
+                      @click.stop="toggleExpand(subNode.code)"
+                    >
+                      {{ subjectExpandedKeys.has(subNode.code) ? '▼' : '▶' }}
+                    </span>
+                    <span v-else class="expand-placeholder"></span>
+                    <span class="node-code">{{ subNode.code }}</span>
+                    <span class="node-name" :title="subNode.name">{{ subNode.name }}</span>
+                  </div>
+                  <!-- 三级渲染 -->
+                  <div v-if="subNode.children && subNode.children.length > 0 && subjectExpandedKeys.has(subNode.code)" class="tree-children">
+                    <div
+                      v-for="subSubNode in subNode.children"
+                      :key="subSubNode.code"
+                      :class="['tree-node', 'leaf', { active: selectedSubjectCode === subSubNode.code }]"
+                      :style="{ paddingLeft: (subSubNode.level - 1) * 12 + 'px' }"
+                      @click="selectSubject(subSubNode.code)"
+                    >
+                      <span class="expand-placeholder"></span>
+                      <span class="node-code">{{ subSubNode.code }}</span>
+                      <span class="node-name" :title="subSubNode.name">{{ subSubNode.name }}</span>
+                    </div>
+                  </div>
                 </template>
-                <el-table-column label="合计" align="center" min-width="100">
-                  <template #default="{ row }">{{ mcRowTotal(row).toFixed(2) }}</template>
-                </el-table-column>
-              </el-table>
-
-              <!-- 期间汇总切换 -->
-              <div style="margin-top:12px">
-                <el-checkbox v-model="mcShowPeriodSummary">显示期间汇总</el-checkbox>
               </div>
-
-              <el-table v-if="mcShowPeriodSummary && mcResult.periodSummary.length > 0" :data="mcResult.periodSummary" border size="small" style="margin-top:8px" class="mc-summary-table">
-                <el-table-column prop="period" label="期间" min-width="90" fixed />
-                <el-table-column label="凭证字号" min-width="110" fixed>
-                  <template #default>（小计）</template>
-                </el-table-column>
-                <el-table-column label="摘要" min-width="140">
-                  <template #default>本期间合计</template>
-                </el-table-column>
-                <template v-for="(col, ci) in mcColumns" :key="col.code">
-                  <el-table-column :label="col.code + ' ' + col.name + ' 借方'" align="center" min-width="110">
-                    <template #default="{ row }">{{ row.cells[ci].debit > 0 ? row.cells[ci].debit.toFixed(2) : '' }}</template>
-                  </el-table-column>
-                  <el-table-column :label="col.code + ' ' + col.name + ' 贷方'" align="center" min-width="110">
-                    <template #default="{ row }">{{ row.cells[ci].credit > 0 ? row.cells[ci].credit.toFixed(2) : '' }}</template>
-                  </el-table-column>
-                </template>
-                <el-table-column label="合计" align="center" min-width="100">
-                  <template #default="{ row }">{{ mcRowTotal(row).toFixed(2) }}</template>
-                </el-table-column>
-              </el-table>
-            </div>
-
-            <div v-else-if="mcParentCode && mcChildren.length > 0" class="mc-empty">
-              <p>暂无数据，请确认所选科目是否有凭证记录</p>
-            </div>
-            <div v-else class="mc-placeholder">
-              <p>请选择上级科目，系统将自动展开其下级科目为多栏列</p>
-            </div>
-          </div>
-
-          <!-- 保存方案弹窗 -->
-          <el-dialog v-model="mcShowDialog" title="保存多栏账方案" width="400px" append-to-body>
-            <el-form label-width="80px" size="small">
-              <el-form-item label="方案名称">
-                <el-input v-model="mcSchemeName" placeholder="如：管理费用多栏账" />
-              </el-form-item>
-              <el-form-item label="上级科目">
-                <span>{{ mcParentCode }} {{ mcParentName }}</span>
-              </el-form-item>
-              <el-form-item label="分析列">
-                <div v-for="c in mcChildren" :key="c.code" style="margin-bottom:2px">{{ c.code }} {{ c.name }}</div>
-                <div v-if="mcChildren.length === 0" style="color:#909399">暂无</div>
-              </el-form-item>
-            </el-form>
-            <template #footer>
-              <el-button size="small" @click="mcShowDialog = false">取消</el-button>
-              <el-button size="small" type="primary" @click="saveMcScheme">保存</el-button>
             </template>
-          </el-dialog>
-        </template>
-
-        <!-- ==================== 数量金额明细账 ==================== -->
-        <template v-if="activeBook === 'qtyDetail'">
-          <div class="data-panel" v-loading="qdLoading">
-            <div class="query-bar">
-              <span class="query-label">期间</span>
-              <el-select v-model="qdPeriod" size="small" style="width:110px" @change="queryQtyDetail">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">日期</span>
-              <el-date-picker v-model="qdStartDate" type="date" size="small" style="width:130px" placeholder="开始日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" @change="queryQtyDetail" />
-              <span class="query-sep">至</span>
-              <el-date-picker v-model="qdEndDate" type="date" size="small" style="width:130px" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" @change="queryQtyDetail" />
-              <el-button size="small" type="primary" style="margin-left:12px" @click="queryQtyDetail" :disabled="!qdSubjectCode">查询</el-button>
-              <el-button size="small" @click="exportCurrentBook" :disabled="qdRows.length === 0 || qdLoading">导出</el-button>
-            </div>
-            <el-table v-if="qdRows.length > 0" :data="qdRows" border stripe size="small" :max-height="450">
-              <el-table-column prop="voucher_date" label="日期" min-width="90" fixed />
-              <el-table-column label="凭证字号" min-width="105" fixed>
-                <template #default="{ row }">{{ row.voucher_word }}-{{ row.voucher_no }}</template>
-              </el-table-column>
-              <el-table-column prop="summary" label="摘要" min-width="130" show-overflow-tooltip />
-              <el-table-column prop="debit" label="借方金额" align="center" min-width="100">
-                <template #default="{ row }">{{ row.debit > 0 ? row.debit.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="credit" label="贷方金额" align="center" min-width="100">
-                <template #default="{ row }">{{ row.credit > 0 ? row.credit.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="quantity" label="数量" align="center" min-width="80">
-                <template #default="{ row }">{{ row.quantity > 0 ? row.quantity.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="unit_price" label="单价" align="center" min-width="85">
-                <template #default="{ row }">{{ row.unit_price > 0 ? row.unit_price.toFixed(4) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="unit" label="单位" align="center" width="60" />
-            </el-table>
-            <div v-else-if="qdSubjectCode" class="mc-empty"><p>「{{ qdSubjectName }}」暂无数量金额数据</p></div>
-            <div v-else class="mc-placeholder"><p>请在右侧科目树中选择科目</p></div>
-            <div v-if="qdTotal > qdPageSize" class="pagination-bar">
-              <el-pagination background layout="prev, pager, next" :total="qdTotal" :page-size="qdPageSize" v-model:current-page="qdPage" @current-change="() => queryQtyDetail(false)" />
-            </div>
           </div>
-        </template>
-
-        <!-- ==================== 数量金额总账 ==================== -->
-        <template v-if="activeBook === 'qtyGeneral'">
-          <div class="data-panel" v-loading="qgLoading">
-            <div class="query-bar">
-              <span class="query-label">期间</span>
-              <el-select v-model="qgPeriodFrom" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-sep">至</span>
-              <el-select v-model="qgPeriodTo" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">科目</span>
-              <el-select v-model="qgSubjectCode" size="small" style="width:200px" clearable placeholder="全部科目" filterable>
-                <el-option v-for="s in allSubjects" :key="s.code" :label="s.code + ' ' + s.name" :value="s.code" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">级次</span>
-              <el-radio-group v-model="qgLevel" size="small" @change="queryQtyGeneral">
-                <el-radio-button value="1">一级</el-radio-button>
-                <el-radio-button value="all">全部</el-radio-button>
-              </el-radio-group>
-              <el-button size="small" type="primary" style="margin-left:12px" @click="queryQtyGeneral">查询</el-button>
-              <el-button size="small" @click="exportCurrentBook" :disabled="qgRows.length === 0 || qgLoading">导出</el-button>
-            </div>
-            <el-table v-if="qgRows.length > 0" :data="qgRows" border stripe size="small" :max-height="450">
-              <el-table-column prop="code" label="科目编码" min-width="90" fixed />
-              <el-table-column prop="name" label="科目名称" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="total_debit" label="借方金额" align="center" min-width="110">
-                <template #default="{ row }">{{ row.total_debit.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column prop="total_credit" label="贷方金额" align="center" min-width="110">
-                <template #default="{ row }">{{ row.total_credit.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column prop="in_quantity" label="数量(收)" align="center" min-width="90">
-                <template #default="{ row }">{{ row.in_quantity > 0 ? row.in_quantity.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="out_quantity" label="数量(付)" align="center" min-width="90">
-                <template #default="{ row }">{{ row.out_quantity > 0 ? row.out_quantity.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="net_quantity" label="净数量" align="center" min-width="85">
-                <template #default="{ row }">{{ row.net_quantity.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column prop="unit" label="单位" align="center" width="60" />
-            </el-table>
-            <div v-else class="mc-empty"><p>暂无数量金额总账数据</p></div>
-          </div>
-        </template>
-
-        <!-- ==================== 核算项目余额表 ==================== -->
-        <template v-if="activeBook === 'projectBalance'">
-          <div class="data-panel" v-loading="pbLoading">
-            <div class="query-bar">
-              <span class="query-label">期间</span>
-              <el-select v-model="pbPeriod" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">核算类别</span>
-              <el-select v-model="pbTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="onPbTypeChange">
-                <el-option v-for="t in pbAuxTypes" :key="t.id" :label="t.name" :value="t.id" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">核算项目</span>
-              <el-select v-model="pbValueId" size="small" style="width:160px" placeholder="全部" clearable :disabled="!pbTypeId">
-                <el-option v-for="v in pbAuxValues" :key="v.id" :label="v.code + ' ' + v.name" :value="v.id" />
-              </el-select>
-              <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectBalance">查询</el-button>
-              <el-button size="small" @click="exportCurrentBook" :disabled="pbRows.length === 0 || pbLoading">导出</el-button>
-            </div>
-            <el-table v-if="pbRows.length > 0" :data="pbRows" border stripe size="small" :max-height="450">
-              <el-table-column prop="subject_code" label="科目编码" min-width="90" fixed />
-              <el-table-column prop="subject_name" label="科目名称" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="debit_amount" label="借方金额" align="center" min-width="110">
-                <template #default="{ row }">{{ row.debit_amount.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column prop="credit_amount" label="贷方金额" align="center" min-width="110">
-                <template #default="{ row }">{{ row.credit_amount.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column label="余额方向" align="center" width="65">
-                <template #default="{ row }">{{ row.debit_amount >= row.credit_amount ? '借' : '贷' }}</template>
-              </el-table-column>
-              <el-table-column label="余额" align="center" min-width="110">
-                <template #default="{ row }">{{ Math.abs(row.debit_amount - row.credit_amount).toFixed(2) }}</template>
-              </el-table-column>
-            </el-table>
-            <div v-else class="mc-empty"><p>请选择核算类别后查询</p></div>
-          </div>
-        </template>
-
-        <!-- ==================== 核算项目明细账 ==================== -->
-        <template v-if="activeBook === 'projectDetail'">
-          <div class="data-panel" v-loading="pdLoading">
-            <div class="query-bar">
-              <span class="query-label">期间</span>
-              <el-select v-model="pdPeriod" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">核算类别</span>
-              <el-select v-model="pdTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="onPdTypeChange">
-                <el-option v-for="t in pdAuxTypes" :key="t.id" :label="t.name" :value="t.id" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">核算项目</span>
-              <el-select v-model="pdValueId" size="small" style="width:160px" placeholder="全部" clearable :disabled="!pdTypeId">
-                <el-option v-for="v in pdAuxValues" :key="v.id" :label="v.code + ' ' + v.name" :value="v.id" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">日期</span>
-              <el-date-picker v-model="pdStartDate" type="date" size="small" style="width:130px" placeholder="开始日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" />
-              <span class="query-sep">至</span>
-              <el-date-picker v-model="pdEndDate" type="date" size="small" style="width:130px" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" />
-              <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectDetail">查询</el-button>
-              <el-button size="small" @click="exportCurrentBook" :disabled="pdRows.length === 0 || pdLoading">导出</el-button>
-            </div>
-            <el-table v-if="pdRows.length > 0" :data="pdRows" border stripe size="small" :max-height="450">
-              <el-table-column prop="voucher_date" label="日期" min-width="90" fixed />
-              <el-table-column label="凭证字号" min-width="105" fixed>
-                <template #default="{ row }">{{ row.voucher_word }}-{{ row.voucher_no }}</template>
-              </el-table-column>
-              <el-table-column prop="summary" label="摘要" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="subject_code" label="科目编码" min-width="85" show-overflow-tooltip />
-              <el-table-column prop="subject_name" label="科目名称" min-width="100" show-overflow-tooltip />
-              <el-table-column prop="debit" label="借方金额" align="center" min-width="100">
-                <template #default="{ row }">{{ row.debit > 0 ? row.debit.toFixed(2) : '' }}</template>
-              </el-table-column>
-              <el-table-column prop="credit" label="贷方金额" align="center" min-width="100">
-                <template #default="{ row }">{{ row.credit > 0 ? row.credit.toFixed(2) : '' }}</template>
-              </el-table-column>
-            </el-table>
-            <div v-else class="mc-empty"><p>请选择核算类别后查询</p></div>
-            <div v-if="pdTotal > pdPageSize" class="pagination-bar">
-              <el-pagination background layout="prev, pager, next" :total="pdTotal" :page-size="pdPageSize" v-model:current-page="pdPage" @current-change="() => queryProjectDetail(false)" />
-            </div>
-          </div>
-        </template>
-
-        <!-- ==================== 核算项目组合表 ==================== -->
-        <template v-if="activeBook === 'projectCombo'">
-          <div class="data-panel" v-loading="pcLoading">
-            <div class="query-bar">
-              <span class="query-label">期间</span>
-              <el-select v-model="period" size="small" style="width:110px">
-                <el-option v-for="m in ['01','02','03','04','05','06','07','08','09','10','11','12']" :key="m" :label="currentYear+'-'+m" :value="currentYear+'-'+m" />
-              </el-select>
-              <span class="query-label" style="margin-left:12px">核算类别</span>
-              <el-select v-model="pcTypeId" size="small" style="width:140px" placeholder="全部" clearable @change="queryProjectCombo">
-                <el-option v-for="t in pcAuxTypes" :key="t.id" :label="t.name" :value="t.id" />
-              </el-select>
-              <el-button size="small" type="primary" style="margin-left:12px" @click="queryProjectCombo">查询</el-button>
-              <el-button size="small" @click="exportCurrentBook" :disabled="!pcData || pcLoading">导出</el-button>
-            </div>
-
-            <div v-if="pcData && pcData.columns.length > 0 && pcData.rows.length > 0" class="mc-table-wrap">
-              <el-table :data="pcData.rows" border stripe size="small" :max-height="450">
-                <el-table-column prop="subject_code" label="科目编码" min-width="90" fixed />
-                <el-table-column prop="subject_name" label="科目名称" min-width="120" show-overflow-tooltip fixed />
-                <template v-for="(col, ci) in pcData.columns" :key="col.value_id">
-                  <el-table-column :label="col.value_code + ' ' + col.value_name + '(借)'" align="center" min-width="105">
-                    <template #default="{ row }">
-                      <span v-if="row.cells[ci].debit > 0" class="money">{{ row.cells[ci].debit.toFixed(2) }}</span>
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="col.value_code + ' ' + col.value_name + '(贷)'" align="center" min-width="105">
-                    <template #default="{ row }">
-                      <span v-if="row.cells[ci].credit > 0" class="money">{{ row.cells[ci].credit.toFixed(2) }}</span>
-                    </template>
-                  </el-table-column>
-                </template>
-              </el-table>
-
-              <!-- 合计行 -->
-              <div v-if="pcData.totals && pcData.totals.length > 0" class="summary-bar" style="margin-top:8px">
-                合计：
-                <template v-for="(t, ti) in pcData.totals" :key="ti">
-                  <template v-if="ti > 0"> | </template>
-                  {{ pcData.columns[ti].value_name }} 借:{{ t.debit.toFixed(2) }} 贷:{{ t.credit.toFixed(2) }}
-                </template>
-              </div>
-            </div>
-            <div v-else-if="pcData && pcData.columns.length === 0 && !pcLoading" class="mc-empty">
-              <p>未找到核算项目数据</p>
-            </div>
-            <div v-else-if="!pcData || pcData.rows.length === 0" class="mc-placeholder">
-              <p>选择核算类别后查询，或确认凭证中已关联辅助核算项目</p>
-            </div>
-          </div>
-        </template>
-
-        <!-- ==================== 其他账簿占位 ==================== -->
-        <template v-if="activeBook !== 'detail' && activeBook !== 'balance' && activeBook !== 'general' && activeBook !== 'multiColumn' && activeBook !== 'qtyDetail' && activeBook !== 'qtyGeneral' && activeBook !== 'projectBalance' && activeBook !== 'projectDetail' && activeBook !== 'projectCombo' && activeBook !== 'trialBalance'">
-          <div class="data-panel" v-loading="loading">
-            <div class="placeholder">
-              <svg viewBox="0 0 24 24" fill="none" width="40" height="40"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 9h18M9 3v18" stroke="currentColor" stroke-width="1.5"/></svg>
-              <p>「{{ currentBookLabel }}」功能规划中，请稍后</p>
-            </div>
-          </div>
-        </template>
+        </div>
       </div>
 
-      <!-- 右侧：科目树（明细账/数量金额明细账显示） -->
-      <aside v-if="activeBook === 'detail' || activeBook === 'qtyDetail'" class="subject-tree-panel">
-        <div class="tree-header">会计科目</div>
-        <div class="tree-body">
-          <template v-for="subj in subjectTree" :key="subj.code">
-            <!-- 一级科目 -->
-            <div
-              :class="['tree-node', 'tree-level1', { active: treeActiveCode === subj.code }]"
-              @click="onTreeSubjectClick(subj.code)"
-            >
-              <span
-                v-if="subj.children && subj.children.length > 0"
-                class="tree-arrow"
-                :class="{ expanded: subjectExpandedKeys.has(subj.code) }"
-                @click.stop="toggleSubjectExpand(subj.code)"
-              >▸</span>
-              <span v-else class="tree-arrow-spacer"></span>
-              <span class="tree-code">{{ subj.code }}</span>
-              <span class="tree-name">{{ subj.name }}</span>
-            </div>
-            <!-- 二级科目 -->
-            <div
-              v-if="subj.children && subj.children.length > 0 && subjectExpandedKeys.has(subj.code)"
-            >
-              <div
-                v-for="child in subj.children"
-                :key="child.code"
-                :class="['tree-node', 'tree-level2', { active: treeActiveCode === child.code }]"
-                @click="onTreeSubjectClick(child.code)"
-              >
-                <span class="tree-arrow-spacer"></span>
-                <span class="tree-code">{{ child.code }}</span>
-                <span class="tree-name">{{ child.name }}</span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </aside>
+      <!-- 右侧：数据与面板区域 -->
+      <div class="ledger-content">
+        <!-- 明细账 -->
+        <DetailLedger
+          v-if="activeBook === 'detail'"
+          :period="period"
+          :selectedSubjectCode="selectedSubjectCode"
+          :allSubjects="allSubjects"
+        />
+
+        <!-- 总账 -->
+        <GeneralLedger
+          v-else-if="activeBook === 'general'"
+          :period="period"
+          :allSubjects="allSubjects"
+        />
+
+        <!-- 科目余额与试算 -->
+        <SubjectBalanceLedger
+          v-else-if="activeBook === 'balance'"
+          :period="period"
+          :allSubjects="allSubjects"
+        />
+
+        <!-- 多栏账 -->
+        <MultiColumnLedger
+          v-else-if="activeBook === 'multiColumn'"
+          :period="period"
+          :allSubjects="allSubjects"
+        />
+
+        <!-- 数量金额账簿 -->
+        <QuantityLedger
+          v-else-if="activeBook === 'qtyLedger'"
+          :period="period"
+          :selectedSubjectCode="selectedSubjectCode"
+          :allSubjects="allSubjects"
+        />
+
+        <!-- 核算项目账簿 -->
+        <ProjectLedger
+          v-else-if="activeBook === 'projectLedger'"
+          :period="period"
+          :allSubjects="allSubjects"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* ================================================================
-   LedgerView — 账簿查询（三栏布局：导航 + 内容 + 科目树）
-   ================================================================ */
-.page-wrap { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-
-/* ---- 页面标题 ---- */
-.page-header {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-shrink: 0; gap: 12px;
+.ledger-view {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 50px);
+  padding: 16px;
+  background-color: var(--el-bg-color-page);
+  box-sizing: border-box;
 }
-.ph-left { display: flex; align-items: center; gap: 12px; }
-.ph-icon {
-  display: flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; border-radius: 8px;
-  background: rgba(16, 185, 129, 0.1); color: var(--epp-success);
-  flex-shrink: 0;
-}
-.ph-title { margin: 0; font-size: 19px; font-weight: 700; color: var(--epp-ink-text); line-height: 1.2; }
-.ph-desc  { margin: 1px 0 0; font-size: 12px; color: var(--epp-ink-sub); }
-.ph-right { flex-shrink: 0; }
 
-/* ---- 三栏布局 ---- */
-.ledger-layout { display: flex; gap: 10px; flex: 1; min-height: 0; }
-
-/* ---- 账簿Tab选择器（rpt-tab风格） ---- */
-.book-tabs {
-  display: flex; flex-wrap: wrap; gap: 0;
-  padding: 0 16px;
-  background: var(--epp-paper);
-  border-bottom: 1px solid var(--epp-line);
+/* 顶部 Tab 样式 */
+.bt-tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--el-border-color-light);
+  padding-bottom: 8px;
   flex-shrink: 0;
 }
 .bt-tab {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 9px 18px;
-  border: none; border-bottom: 2px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px; font-family: inherit; color: var(--epp-ink-sub);
-  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
   font-weight: 500;
-  position: relative; top: 1px;
-  white-space: nowrap;
+  border: 1px solid var(--epp-line);
+  background-color: var(--epp-paper);
+  color: var(--epp-ink-sub);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-.bt-tab:hover { color: var(--epp-ink-text); }
+.bt-tab:hover {
+  border-color: var(--epp-gold);
+  color: var(--epp-ink);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(184, 148, 62, 0.12);
+}
 .bt-tab.active {
-  color: var(--epp-accent);
-  border-bottom-color: var(--epp-accent);
-  font-weight: 600;
+  background: linear-gradient(135deg, var(--epp-ink) 0%, var(--epp-ink-light) 100%);
+  border-color: var(--epp-ink);
+  color: var(--epp-ledger);
+  box-shadow: 0 4px 12px rgba(10, 30, 61, 0.2);
 }
-.bt-icon {
-  display: flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; flex-shrink: 0;
-  opacity: 0.55; transition: opacity 0.15s;
-}
-.bt-tab.active .bt-icon,
-.bt-tab:hover .bt-icon { opacity: 1; }
-
-/* ---- 中间内容区 ---- */
-.ledger-content { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-
-/* ---- 查询条件栏 ---- */
-.query-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 16px; background: #f8fafc;
-  border: 1px solid var(--epp-line-light); border-radius: 6px;
-  flex-wrap: wrap; flex-shrink: 0;
-  box-shadow: 0 1px 2px rgba(10, 30, 61, 0.02);
-}
-.query-left  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.query-label { font-size: 12px; color: var(--epp-ink-sub); font-weight: 500; white-space: nowrap; }
-.query-sep   { font-size: 12px; color: var(--epp-ink-sub); }
-.query-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-
-/* ---- 科目信息头 ---- */
-.subject-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 16px; background: var(--epp-paper);
-  border: 1px solid var(--epp-line-light); border-radius: 6px; flex-shrink: 0;
-  box-shadow: 0 1px 2px rgba(10, 30, 61, 0.02);
-  transition: box-shadow 0.15s;
-}
-.subject-code {
-  font-size: 14px; font-weight: 700; color: var(--epp-success);
-  font-variant-numeric: tabular-nums; font-family: "SF Mono", Consolas, monospace;
-}
-.subject-name { font-size: 15px; font-weight: 600; color: var(--epp-ink-text); }
-.subject-dir-tag { margin-left: auto; }
-
-/* ---- 数据面板 ---- */
-.data-panel {
-  flex: 1; background: var(--epp-paper);
-  border: 1px solid var(--epp-line-light); border-radius: 6px;
-  padding: 14px; overflow-y: auto; min-height: 300px;
-  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.04);
-  display: flex; flex-direction: column;
-}
-.data-panel :deep(.el-table) {
-  --el-table-border-color: var(--epp-line-light);
-  --el-table-header-bg-color: #f1f5f9;
-  font-size: 12px;
+.bt-tab.active:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(10, 30, 61, 0.25);
 }
 
-.data-panel :deep(.el-table__body tr:hover > td) {
-  border-bottom-color: var(--epp-line-light) !important;
+/* 布局 */
+.ledger-layout {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  overflow: hidden;
+  height: calc(100% - 60px);
 }
 
-/* 当前行激活/选中 */
-.data-panel :deep(.el-table__body tr.current-row) {
-  background-color: #e8f0f8 !important;
+/* 侧边栏科目树 */
+.ledger-sidebar {
+  width: 230px;
+  background-color: var(--epp-paper);
+  border: 1px solid var(--epp-line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s ease;
 }
-.data-panel :deep(.el-table__body tr.current-row > td) {
-  background-color: #e8f0f8 !important;
-  border-bottom-color: var(--epp-line-light) !important;
+.sidebar-title {
+  padding: 14px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--epp-ink);
+  border-bottom: 1px solid var(--epp-line-light);
+  background-color: var(--epp-ledger);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  letter-spacing: 0.5px;
 }
-.data-panel :deep(.el-table th) {
-  text-align: center; font-weight: 600;
+.sidebar-search {
+  padding: 8px 12px;
+  background-color: var(--epp-paper);
+  border-bottom: 1px solid var(--epp-line-light);
 }
-.data-panel :deep(.el-table .cell) {
-  padding: 6px 8px;
+.subject-tree-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 0;
 }
-
-/* ---- 明细账汇总行高亮 ---- */
-.summary-highlight { font-weight: 700; color: var(--epp-ink-text); }
-
-/* 方向标记 */
-.dir-tag {
-  display: inline-block; width: 22px; height: 20px; line-height: 20px;
-  border-radius: 3px; font-size: 11px; font-weight: 700; text-align: center;
-}
-.dir-debit  { background: #e8f4fd; color: #1a6eb5; }
-.dir-credit { background: #fde8ec; color: #b5435a; }
-
-/* 合计栏 */
-.summary-bar {
-  margin-top: auto; padding: 10px 16px; background: #f0fdf4;
-  border: 1px solid #d1fae5; border-radius: 6px;
-  font-size: 13px; color: var(--epp-ink-text); font-weight: 500;
-}
-.summary-bar :deep(.money) { color: var(--epp-success); }
-
-.money {
-  font-variant-numeric: tabular-nums; font-weight: 500;
-  font-family: "SF Mono", Consolas, "Cascadia Code", monospace;
-}
-
-/* 分页栏 */
-.pagination-bar {
-  display: flex; justify-content: center; padding: 12px 0 4px;
-}
-
-/* ---- 占位 ---- */
-.placeholder {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  height: 300px; color: var(--epp-ink-sub); gap: 16px;
-}
-.placeholder svg { color: var(--epp-line); }
-.placeholder p { font-size: 14px; margin: 0; }
-
-/* ---- 右侧科目树 ---- */
-.subject-tree-panel {
-  width: 195px; min-width: 195px; background: var(--epp-paper);
-  border: 1px solid var(--epp-line-light); border-radius: 6px;
-  display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(10, 30, 61, 0.03);
-}
-.tree-header {
-  padding: 10px 14px; font-size: 12px; font-weight: 700;
-  color: var(--epp-ink-sub); border-bottom: 1px solid var(--epp-line-light);
-  background: #f8fafc; flex-shrink: 0;
-  letter-spacing: 0.3px;
-}
-.tree-body { flex: 1; overflow-y: auto; padding: 4px 0; }
-
 .tree-node {
-  display: flex; align-items: center; gap: 4px;
-  padding: 5px 10px; cursor: pointer; transition: all 0.12s ease;
-  font-size: 12px; color: var(--epp-ink-text); border-left: 3px solid transparent;
-  margin-right: 4px; border-radius: 0 4px 4px 0;
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--epp-ink-sub);
+  cursor: pointer;
+  user-select: none;
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
 }
-.tree-node:hover { background: rgba(8, 145, 178, 0.06); }
+.tree-node:hover {
+  background-color: var(--epp-ledger);
+  color: var(--epp-ink);
+}
 .tree-node.active {
-  background: rgba(8, 145, 178, 0.08); color: var(--epp-accent);
-  font-weight: 600; border-left-color: var(--epp-accent);
+  background-color: rgba(184, 148, 62, 0.08);
+  border-left-color: var(--epp-gold);
+  color: var(--epp-ink);
+  font-weight: 700;
 }
-.tree-level1 { padding-left: 8px; }
-.tree-level2 { padding-left: 28px; }
-
-.tree-arrow {
-  display: inline-block; width: 14px; height: 14px; font-size: 10px;
-  text-align: center; line-height: 14px; color: var(--epp-ink-sub);
-  transition: transform 0.15s, color 0.15s; cursor: pointer; flex-shrink: 0;
+.expand-icon {
+  width: 18px;
+  font-size: 10px;
+  color: var(--epp-ink-sub);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
 }
-.tree-arrow.expanded { transform: rotate(90deg); color: var(--epp-accent); }
-.tree-arrow-spacer { width: 14px; flex-shrink: 0; }
-
-.tree-code { color: var(--epp-ink-sub); font-size: 10px; font-variant-numeric: tabular-nums; min-width: 32px; }
-.tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ---- 多栏账 ---- */
-.mc-toolbar {
-  padding: 14px 16px; background: #f8fafc; border-bottom: 1px solid var(--epp-line-light);
-  display: flex; flex-direction: column; gap: 10px;
-  border-radius: 6px 6px 0 0;
+.tree-node.active .expand-icon {
+  color: var(--epp-gold);
 }
-.toolbar-label { font-size: 12px; color: var(--epp-ink-sub); font-weight: 500; white-space: nowrap; }
-.mc-toolbar-row {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+.expand-placeholder {
+  width: 18px;
 }
-.mc-column-tags {
-  padding: 10px 16px; background: #fff; border-bottom: 1px dashed var(--epp-line-light);
-  display: flex; align-items: center; flex-wrap: wrap;
+.node-code {
+  font-family: 'Consolas', 'Fira Code', monospace;
+  font-weight: 600;
+  margin-right: 8px;
+  color: var(--epp-ink-sub);
 }
-.mc-tag-label { font-size: 12px; color: var(--epp-ink-sub); margin-right: 4px; }
-.mc-table-wrap { padding: 0 0 12px 0; }
-.mc-empty, .mc-placeholder {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  height: 200px; color: var(--epp-ink-sub); font-size: 13px; gap: 12px;
+.tree-node.active .node-code {
+  color: var(--epp-gold);
 }
-.mc-empty svg, .mc-placeholder svg { color: var(--epp-line); }
-.mc-summary-table :deep(.el-table__row) { background: #f0fdf4; font-weight: 500; }
-
-/* ---- 表格内 el-tag 尺寸统一 ---- */
-:deep(.el-tag--small) { font-size: 11px; }
-
-/* ---- 试算平衡状态 ---- */
-.tb-balanced {
-  display: inline-block; padding: 2px 8px; border-radius: 4px;
-  background: #e8f4fd; color: #1a6eb5; font-size: 12px; font-weight: 600;
-}
-.tb-unbalanced {
-  display: inline-block; padding: 2px 8px; border-radius: 4px;
-  background: #fde8ec; color: #b5435a; font-size: 12px; font-weight: 600;
+.node-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* ---- 打印样式 ---- */
-@media print {
-  .page-wrap { height: auto; overflow: visible; }
-  .subject-tree-panel,
-  .query-bar,
-  .pagination-bar,
-  .ph-right,
-  .ph-desc,
-  .mc-toolbar,
-  .mc-column-tags,
-  .summary-bar,
-  .el-button { display: none !important; }
-  .data-panel {
-    border: none; box-shadow: none; overflow: visible;
-    padding: 0; min-height: auto;
-  }
-  .data-panel :deep(.el-table) { font-size: 11px; }
-  .data-panel :deep(.el-table__body tr:hover > td) { background-color: var(--epp-surface-striped) !important; }
-  .data-panel :deep(.el-table__header-wrapper) { position: static; }
-  .ledger-content { overflow: visible; }
-  body { background: #fff; }
-}
-
-/* ---- 滚动条优化 ---- */
-.tree-body::-webkit-scrollbar,
-.data-panel::-webkit-scrollbar {
-  width: 4px; height: 4px;
-}
-.tree-body::-webkit-scrollbar-thumb,
-.data-panel::-webkit-scrollbar-thumb {
-  background: var(--epp-line); border-radius: 2px;
-}
-
-/* ---- 空状态图标 ---- */
-.mc-empty::before, .mc-placeholder::before {
-  content: ''; display: block;
-  width: 40px; height: 40px;
-  background: currentColor; opacity: 0.15;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Cline x1='3' y1='9' x2='21' y2='9'/%3E%3C/svg%3E") center/contain no-repeat;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Cline x1='3' y1='9' x2='21' y2='9'/%3E%3C/svg%3E") center/contain no-repeat;
+/* 主数据区域 */
+.ledger-content {
+  flex: 1;
+  background-color: var(--epp-paper);
+  border: 1px solid var(--epp-line);
+  border-radius: 8px;
+  padding: 20px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* PRO MAX：主面板固定尺寸，表格自带溢出滚动 */
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
 }
 </style>
-

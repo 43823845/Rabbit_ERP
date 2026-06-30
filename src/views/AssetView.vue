@@ -24,10 +24,11 @@ const editingId = ref(0);
 
 const categories = ['房屋建筑', '机器设备', '运输工具', '电子设备', '办公设备', '家具器具', '其他'];
 
-const form = reactive<AssetCardPayload & { assetName: string; originalValue: number }>({
+const form = reactive<AssetCardPayload & { assetName: string; originalValue: number; depSubjectCode?: string; depSubjectName?: string }>({
   assetCode: '', assetName: '', category: '办公设备', buyDate: '',
   originalValue: 0, residualRate: 0.05, usefulLifeYears: 5,
   status: '在用', department: '', remark: '',
+  depSubjectCode: '6602', depSubjectName: '管理费用',
 });
 
 const previewMonthlyDep = computed(() => {
@@ -51,6 +52,15 @@ async function loadData() {
   } finally { loading.value = false; }
 }
 
+const expenseSubjects = ref<any[]>([]);
+
+function handleSubjectChange(code: string) {
+  const s = expenseSubjects.value.find(x => x.code === code);
+  if (s) {
+    form.depSubjectName = s.name;
+  }
+}
+
 function openCreate() {
   dialogMode.value = 'create';
   editingId.value = 0;
@@ -64,10 +74,12 @@ function openCreate() {
   form.status = '在用';
   form.department = '';
   form.remark = '';
+  form.depSubjectCode = '6602';
+  form.depSubjectName = '管理费用';
   dialogOpen.value = true;
 }
 
-function openEdit(row: AssetCard) {
+function openEdit(row: any) {
   dialogMode.value = 'edit';
   editingId.value = row.id;
   form.assetCode = row.asset_code;
@@ -80,6 +92,8 @@ function openEdit(row: AssetCard) {
   form.status = row.status;
   form.department = row.department;
   form.remark = row.remark;
+  form.depSubjectCode = row.dep_subject_code || '6602';
+  form.depSubjectName = row.dep_subject_name || '管理费用';
   dialogOpen.value = true;
 }
 
@@ -132,7 +146,15 @@ function statusTag(status: string) {
   return map[status] || 'info';
 }
 
-onMounted(loadData);
+onMounted(async () => {
+  await loadData();
+  try {
+    const list = await api.listSubjects();
+    expenseSubjects.value = list.filter((s: any) =>
+      s.category === 'expense' || s.category === 'cost' || s.code.startsWith('6') || s.code.startsWith('5')
+    );
+  } catch (_) { /* */ }
+});
 </script>
 
 <template>
@@ -204,6 +226,11 @@ onMounted(loadData);
           </template>
         </el-table-column>
         <el-table-column prop="department" label="使用部门" width="100" />
+        <el-table-column label="折旧科目" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.dep_subject_code ? `${row.dep_subject_code} ${row.dep_subject_name}` : '6602 管理费用' }}
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="95" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
@@ -263,6 +290,15 @@ onMounted(loadData);
           </el-col>
           <el-col :span="12">
             <el-form-item label="状态"><el-select v-model="form.status" style="width:100%" :disabled="dialogMode === 'create'"><el-option label="在用" value="在用" /><el-option label="已提足折旧" value="已提足折旧" /><el-option label="报废" value="报废" /><el-option label="已处置" value="已处置" /></el-select></el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="24">
+            <el-form-item label="折旧科目" required>
+              <el-select v-model="form.depSubjectCode" placeholder="请选择折旧借方费用科目" style="width:100%" @change="handleSubjectChange" filterable>
+                <el-option v-for="s in expenseSubjects" :key="s.code" :label="`${s.code} ${s.name}`" :value="s.code" />
+              </el-select>
+            </el-form-item>
           </el-col>
         </el-row>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>

@@ -52,7 +52,10 @@ async function voucherAction(v: FinanceVoucher, fn: (id: number) => any, msg: st
   if (r?.__error) return ElMessage.error(r.__error);
   ElMessage.success(msg); refresh();
 }
-async function handleAudit(v: FinanceVoucher) { voucherAction(v, id => api.auditVoucher(id), '已审核'); }
+async function handleAudit(v: FinanceVoucher) {
+  const userAlias = auth.state.user?.alias || auth.state.user?.username || 'admin';
+  voucherAction(v, id => api.auditVoucher(id, userAlias), '已审核');
+}
 async function handleUnaudit(v: FinanceVoucher) { voucherAction(v, id => api.unauditVoucher(id), '已取消审核'); }
 async function handlePost(v: FinanceVoucher) { voucherAction(v, id => api.postVoucher(id), '已过账'); }
 async function handleUnpost(v: FinanceVoucher) { voucherAction(v, id => api.unpostVoucher(id), '已反过账'); }
@@ -210,7 +213,8 @@ async function handleBatchAudit() {
     await ElMessageBox.confirm(`确定批量审核 ${draftIds.length} 张草稿凭证？注意制单人与审核人不能为同一人。`, '批量审核', {
       confirmButtonText: '批量审核', cancelButtonText: '取消', type: 'warning',
     });
-    const result = await api.batchAuditVouchers(draftIds);
+    const userAlias = auth.state.user?.alias || auth.state.user?.username || 'admin';
+    const result = await api.batchAuditVouchers(draftIds, userAlias);
     if (result.success > 0) ElMessage.success(`批量审核完成：成功 ${result.success} 张，失败 ${result.failed} 张`);
     else ElMessage.warning(`批量审核：全部 ${result.failed} 张失败（可能是制单人和审核人相同）`);
     refresh();

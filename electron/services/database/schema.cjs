@@ -242,6 +242,8 @@ const DDL = `
     status TEXT NOT NULL DEFAULT '在用' CHECK(status IN ('在用','已提足折旧','报废','已处置')),
     department TEXT NOT NULL DEFAULT '',
     remark TEXT NOT NULL DEFAULT '',
+    dep_subject_code TEXT DEFAULT '',
+    dep_subject_name TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (book_id) REFERENCES acct_book(id) ON DELETE CASCADE
@@ -269,6 +271,9 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_log_action_time ON sys_operation_log(action, created_at)',
   'CREATE INDEX IF NOT EXISTS idx_asset_book ON fa_asset_card(book_id)',
   'CREATE INDEX IF NOT EXISTS idx_asset_book_status ON fa_asset_card(book_id, status)',
+  // v1.2.0 优化高性能复合索引
+  'CREATE INDEX IF NOT EXISTS idx_voucher_book_period_status ON gl_voucher(book_id, period, status)',
+  'CREATE INDEX IF NOT EXISTS idx_voucher_entry_subj_voucher ON gl_voucher_entry(subject_code, voucher_id)',
 ];
 
 // REPORT_TEMPLATES 已移至 ../../shared/report-templates.cjs（共享数据源）
@@ -282,6 +287,13 @@ function applySchema(db) {
   for (const idx of INDEXES) {
     db.exec(idx);
   }
+  // 数据库升级：为 fa_asset_card 增加折旧费用科目字段
+  try {
+    db.exec('ALTER TABLE fa_asset_card ADD COLUMN dep_subject_code TEXT DEFAULT ""');
+  } catch (_) { /* 字段已存在 */ }
+  try {
+    db.exec('ALTER TABLE fa_asset_card ADD COLUMN dep_subject_name TEXT DEFAULT ""');
+  } catch (_) { /* 字段已存在 */ }
 }
 
 /**

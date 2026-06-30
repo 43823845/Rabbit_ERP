@@ -15,8 +15,8 @@ import type {
   VoucherWordType, VoucherWordPayload,
 } from '../vite-env';
 
-function ipc(channel: string, payload?: unknown): Promise<any> {
-  return window.electronAPI!.invoke(`finance:${channel}`, payload).then((result: any) => {
+function ipc(channel: string, ...args: any[]): Promise<any> {
+  return window.electronAPI!.invoke(`finance:${channel}`, ...args).then((result: any) => {
     if (result && typeof result === 'object' && '__error' in result) {
       throw new Error(result.__error);
     }
@@ -112,7 +112,7 @@ export class ElectronFinanceApi implements FinanceApi {
   async createVoucher(p: VoucherPayload): Promise<FinanceVoucher> { return ipc('createVoucher', p); }
   async updateVoucher(p: VoucherPayload): Promise<FinanceVoucher> { return ipc('updateVoucher', p); }
   async deleteVoucher(id: number): Promise<void> { return ipc('deleteVoucher', id); }
-  async auditVoucher(id: number): Promise<FinanceVoucher> { return ipc('auditVoucher', id); }
+  async auditVoucher(id: number, operator?: string): Promise<FinanceVoucher> { return ipc('auditVoucher', id, operator); }
   async unauditVoucher(id: number): Promise<FinanceVoucher> { return ipc('unauditVoucher', id); }
   async postVoucher(id: number): Promise<FinanceVoucher> { return ipc('postVoucher', id); }
   async unpostVoucher(id: number): Promise<FinanceVoucher> { return ipc('unpostVoucher', id); }
@@ -190,7 +190,7 @@ export class ElectronFinanceApi implements FinanceApi {
   async exportDataJson(): Promise<any> { return ipc('exportDataJson'); }
 
   /* 批量操作 */
-  async batchAuditVouchers(ids: number[]): Promise<{ success: number; failed: number }> { return ipc('batchAuditVouchers', ids); }
+  async batchAuditVouchers(ids: number[], operator?: string): Promise<{ success: number; failed: number }> { return ipc('batchAuditVouchers', ids, operator); }
   async batchPostVouchers(ids: number[]): Promise<{ success: number; failed: number }> { return ipc('batchPostVouchers', ids); }
 
   /* 操作日志 */

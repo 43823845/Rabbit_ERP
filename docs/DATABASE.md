@@ -9,7 +9,7 @@
 | WAL 模式 | 启用（并发读性能） |
 | 外键约束 | 启用 (PRAGMA foreign_keys = ON) |
 | 数据库密码 | PBKDF2-SHA256 哈希，默认密码 `123456` |
-| 模块化 | 14 个独立模块文件（schema / companies / users / subjects / vouchers / periods / openings / reports / auxiliary / attachments / voucher-words / multi-column / data-manager / utils） |
+| 模块化 | 15 个独立模块文件（schema / companies / users / subjects / vouchers / periods / openings / ledgers / statements / auxiliary / attachments / voucher-words / multi-column / data-manager / utils） |
 
 ---
 
@@ -170,6 +170,32 @@ draft（草稿）──审核→ audited（已审核）──过账→ posted（
 | company_id | INTEGER | 所属公司 |
 | created_at | TEXT | 操作时间 |
 
+### 3.9 fa_asset_card（固定资产卡片表）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER PK | 自增主键 |
+| book_id | INTEGER NOT NULL | 关联账套 ID |
+| asset_code | TEXT NOT NULL | 资产编码 |
+| asset_name | TEXT NOT NULL | 资产名称 |
+| category | TEXT | 类别（办公设备、电子设备等） |
+| buy_date | TEXT NOT NULL | 购入日期 |
+| original_value | REAL | 固定资产原值 |
+| residual_rate | REAL | 预计净残值率（如 0.05） |
+| useful_life_years | INTEGER | 折旧年限（年） |
+| monthly_depreciation | REAL | 月折旧额 |
+| accumulated_depreciation | REAL | 累计折旧 |
+| net_value | REAL | 固定资产净值 |
+| status | TEXT | 状态（在用、已提足折旧、报废、已处置） |
+| department | TEXT | 使用部门 |
+| dep_subject_code | TEXT | 折旧费用归集借方科目编码（如 6602） |
+| dep_subject_name | TEXT | 折旧费用归集借方科目名称（如 管理费用） |
+| remark | TEXT | 备注 |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+
+**用途**：记录固定资产原值、残值与使用年限，配合折旧引擎自动计提并在最后一天生成折旧凭证。
+
 ---
 
 ## 4. 数据隔离策略
@@ -207,6 +233,8 @@ draft（草稿）──审核→ audited（已审核）──过账→ posted（
 | gl_voucher | (voucher_word, voucher_no) 隐式 | 凭证号排序 |
 | gl_voucher | period, status | 凭证筛选 |
 | gl_voucher_entry | voucher_id FK | 分录关联查询 |
+| gl_voucher | (book_id, period, status) [v1.2.0] | 高性能跨账套期间过账凭证筛选 |
+| gl_voucher_entry | (subject_code, voucher_id) [v1.2.0] | 高性能科目明细账/总账反向分录检索 |
 
 ---
 

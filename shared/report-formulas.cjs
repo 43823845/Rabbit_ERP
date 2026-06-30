@@ -142,11 +142,6 @@ function fillTemplateAmount(templateRows, balanceMap, openingMap, monthlyMap, op
       if (total.row_no !== 21) {
         total.amount = Math.abs(sum) > 0.001 ? sum : total.amount;
       }
-
-      // 所有者权益合计需加上净利润
-      if (total.row_no === 53) {
-        total.amount += netProfitAmount || (netProfitRow?.amount || 0);
-      }
     }
   }
 

@@ -44,8 +44,8 @@ function applyAssetMethods(FinanceDatabase) {
     const result = this.db.prepare(
       `INSERT INTO fa_asset_card (book_id, asset_code, asset_name, category, buy_date, original_value,
         residual_rate, useful_life_years, monthly_depreciation, accumulated_depreciation, net_value,
-        status, department, remark)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
+        status, department, remark, dep_subject_code, dep_subject_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`
     ).run(
       this.currentBookId,
       payload.assetCode || '',
@@ -59,7 +59,9 @@ function applyAssetMethods(FinanceDatabase) {
       payload.originalValue || 0, // net_value 初始 = 原值
       payload.status || '在用',
       payload.department || '',
-      payload.remark || ''
+      payload.remark || '',
+      payload.depSubjectCode || '',
+      payload.depSubjectName || ''
     );
     this._log('create_asset', `新增固定资产「${payload.assetName}」原值 ${(payload.originalValue || 0).toFixed(2)}`);
     return { id: result.lastInsertRowid, monthlyDepreciation: monthlyDep };
@@ -86,6 +88,7 @@ function applyAssetMethods(FinanceDatabase) {
         original_value = ?, residual_rate = ?, useful_life_years = ?,
         monthly_depreciation = ?, accumulated_depreciation = ?, net_value = ?,
         status = ?, department = ?, remark = ?,
+        dep_subject_code = ?, dep_subject_name = ?,
         updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND book_id = ?`
     ).run(
@@ -98,6 +101,8 @@ function applyAssetMethods(FinanceDatabase) {
       payload.status ?? existing.status,
       payload.department ?? existing.department,
       payload.remark ?? existing.remark,
+      payload.depSubjectCode ?? existing.dep_subject_code,
+      payload.depSubjectName ?? existing.dep_subject_name,
       id, this.currentBookId
     );
     this._log('update_asset', `更新固定资产「${payload.assetName || existing.asset_name}」`);
@@ -153,21 +158,31 @@ function applyAssetMethods(FinanceDatabase) {
         `UPDATE fa_asset_card SET accumulated_depreciation = ?, net_value = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND book_id = ?`
       ).run(finalAccDep, finalNetValue, finalStatus, id, self.currentBookId);
 
-      // 自动生成折旧会计凭证（借：管理费用 6602 / 贷：累计折旧 1602）
+      // 自动生成折旧会计凭证（借：[折旧科目] / 贷：累计折旧 1602）
       const period = self._getCurrentPeriod();
-      const nextNo = self.getNextVoucherNo({ voucherWord: '记', period });
+      const nextNo = self.getNextVoucherNo('记', period);
       generatedVoucherNo = nextNo;
       const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+      // 计算期末最后一天日期
+      const yearNum = parseInt(period.substring(0, 4));
+      const monthNum = parseInt(period.substring(5, 7));
+      const lastDay = new Date(yearNum, monthNum, 0).getDate();
+      const dateStr = `${period}-${String(lastDay).padStart(2, '0')}`;
+
       const voucherResult = self.db.prepare(
         `INSERT INTO gl_voucher (book_id, period, voucher_word, voucher_no, voucher_date, remark, status, maker, created_at)
          VALUES (?, ?, '记', ?, ?, '计提折旧：' || ?, 'posted', 'system', ?)`
-      ).run(self.currentBookId, period, nextNo, period + '-01', card.asset_name, now);
+      ).run(self.currentBookId, period, nextNo, dateStr, card.asset_name, now);
       const voucherId = voucherResult.lastInsertRowid;
+
+      const depSubjCode = card.dep_subject_code || '6602';
+      const depSubjName = card.dep_subject_name || '管理费用';
 
       self.db.prepare(
         `INSERT INTO gl_voucher_entry (voucher_id, summary, subject_code, subject_name, debit, credit, line_no)
-         VALUES (?, '计提折旧', '6602', '管理费用', ?, 0, 1)`
-      ).run(voucherId, addDep);
+         VALUES (?, '计提折旧', ?, ?, ?, 0, 1)`
+      ).run(voucherId, depSubjCode, depSubjName, addDep);
       self.db.prepare(
         `INSERT INTO gl_voucher_entry (voucher_id, summary, subject_code, subject_name, debit, credit, line_no)
          VALUES (?, '累计折旧', '1602', '累计折旧', 0, ?, 2)`

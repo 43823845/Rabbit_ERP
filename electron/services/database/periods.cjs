@@ -4,6 +4,15 @@
  * 负责 acct_period 的结账/反结账，含损益结转逻辑
  */
 
+function getNextPeriod(period) {
+  const y = parseInt(period.substring(0, 4));
+  const m = parseInt(period.substring(5, 7));
+  if (m === 12) {
+    return (y + 1) + '-01';
+  }
+  return y + '-' + String(m + 1).padStart(2, '0');
+}
+
 /**
  * 将期间管理方法挂载到 FinanceDatabase 原型
  */
@@ -64,6 +73,29 @@ function applyPeriodMethods(FinanceDatabase) {
     // 损益结转
     this._carryForwardProfit(period);
 
+    // 计算当期期末余额并结转写入下一期期初
+    const nextPeriod = getNextPeriod(period);
+    const balances = this.getSubjectBalance({ period });
+    const self = this;
+    const txCF = this.db.transaction(() => {
+      // 写入下期期初前，先清空下期已有的（防止重复结账等导致的脏数据）
+      self.db.prepare(
+        'DELETE FROM gl_opening_balance WHERE book_id = ? AND period = ?'
+      ).run(self.currentBookId, nextPeriod);
+
+      const ins = self.db.prepare(
+        'INSERT INTO gl_opening_balance (book_id, subject_code, subject_name, debit, credit, period) VALUES (?, ?, ?, ?, ?, ?)'
+      );
+
+      for (const b of balances) {
+        if (Math.abs(b.balance) < 0.001) continue;
+        const debitVal = b.direction === 'debit' ? b.balance : 0;
+        const creditVal = b.direction === 'credit' ? b.balance : 0;
+        ins.run(self.currentBookId, b.code, b.name, debitVal, creditVal, nextPeriod);
+      }
+    });
+    txCF();
+
     // 关闭期间
     this.db.prepare(
       "UPDATE acct_period SET status = 'closed', closed_at = datetime('now','localtime') WHERE book_id = ? AND period = ?"
@@ -95,6 +127,12 @@ function applyPeriodMethods(FinanceDatabase) {
       }
       if (cr && cr.status === 'closed' && cp === period) break;
     }
+
+    // 清理本期结账结转至下期的期初余额
+    const nextPeriod = getNextPeriod(period);
+    this.db.prepare(
+      'DELETE FROM gl_opening_balance WHERE book_id = ? AND period = ?'
+    ).run(this.currentBookId, nextPeriod);
 
     this._reverseCarryForward(period);
 

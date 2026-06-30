@@ -1,189 +1,13 @@
 /**
- * database/reports.cjs — 财务报表查询
+ * database/statements.cjs — 财务报表生成与归集
  *
- * 负责所有财务报告的查询与计算：
- *   - 科目余额表、总账、明细账、试算平衡
- *   - 利润表、资产负债表、现金流量表
- *   - 数量金额账簿、跨年数据完整性检查
+ * 负责利润表、资产负债表、现金流量表、所有者权益变动表、应交税费及费用明细表等各种财务报表的 SQL 计算与公式归类
  */
 const { REPORT_TEMPLATES } = require('./schema.cjs');
 const { fillTemplateAmount, classifyCashFlowCategory } = require('../../../shared/report-formulas.cjs');
 
-/**
- * 将报表方法挂载到 FinanceDatabase 原型
- */
-function applyReportMethods(FinanceDatabase) {
+function applyStatementMethods(FinanceDatabase) {
   const proto = FinanceDatabase.prototype;
-
-  // ==================== 科目余额表 ====================
-
-  proto.getSubjectBalance = function ({ period, subjectCode, category }) {
-    if (!this.db) return [];
-    this._ensureBookId();
-
-    let conds = ' AND v.book_id = ?';
-    const params = [this.currentBookId];
-    if (period) { conds += ' AND v.period = ?'; params.push(period); }
-    if (subjectCode) { conds += ' AND e.subject_code = ?'; params.push(subjectCode); }
-    if (category) {
-      conds += ' AND e.subject_code IN (SELECT code FROM bd_subject WHERE category = ? AND book_id = ?)';
-      params.push(category, this.currentBookId);
-    }
-
-    const openingPeriod = period ? (period.substring(0, 4) + '-01') : null;
-
-    const rows = this.db.prepare(`
-      SELECT e.subject_code AS code, MAX(e.subject_name) AS name,
-             SUM(e.debit) AS debit_amount, SUM(e.credit) AS credit_amount
-      FROM gl_voucher_entry e
-      JOIN gl_voucher v ON v.id = e.voucher_id
-      WHERE v.status = 'posted' ${conds}
-      GROUP BY e.subject_code ORDER BY e.subject_code
-    `).all(...params);
-
-    const openings = openingPeriod ? this.getOpeningBalances(openingPeriod) : [];
-    const self = this;
-
-    return rows.map(row => {
-      const opening = openings.find(o => o.subject_code === row.code);
-      const opDebit = opening?.debit || 0;
-      const opCredit = opening?.credit || 0;
-      const dAmt = row.debit_amount;
-      const cAmt = row.credit_amount;
-
-      const subj = self.db.prepare('SELECT direction FROM bd_subject WHERE code = ? AND book_id = ?').get(row.code, self.currentBookId);
-      const direction = subj?.direction || 'debit';
-      const balance = direction === 'debit'
-        ? opDebit - opCredit + dAmt - cAmt
-        : opCredit - opDebit + cAmt - dAmt;
-
-      return { code: row.code, name: row.name, openingDebit: opDebit, openingCredit: opCredit,
-        debitAmount: dAmt, creditAmount: cAmt, balance, direction };
-    });
-  };
-
-  // ==================== 总账 ====================
-
-  proto.getGeneralLedger = function ({ subjectCode, period, page = 1, pageSize = 50 }) {
-    if (!this.db) return { rows: [], total: 0 };
-    this._ensureBookId();
-
-    let conds = " AND v.status = 'posted' AND v.book_id = ?";
-    const params = [this.currentBookId];
-    if (period) { conds += ' AND v.period = ?'; params.push(period); }
-    if (subjectCode) { conds += ' AND e.subject_code = ?'; params.push(subjectCode); }
-
-    let total = 0;
-    try {
-      total = this.db.prepare(
-        `SELECT COUNT(*) as total FROM (SELECT DISTINCT e.subject_code FROM gl_voucher_entry e JOIN gl_voucher v ON v.id=e.voucher_id WHERE 1=1 ${conds})`
-      ).get(...params)?.total || 0;
-    } catch (_) { total = 0; }
-
-    const offset = (page - 1) * pageSize;
-    const rows = this.db.prepare(`
-      SELECT e.subject_code AS code, e.subject_name AS name,
-             SUM(e.debit) AS total_debit, SUM(e.credit) AS total_credit
-      FROM gl_voucher_entry e JOIN gl_voucher v ON v.id = e.voucher_id
-      WHERE 1=1 ${conds}
-      GROUP BY e.subject_code ORDER BY e.subject_code
-      LIMIT ? OFFSET ?
-    `).all(...params, pageSize, offset);
-
-    return { rows, total };
-  };
-
-  // ==================== 明细账（含承前页/过次页） ====================
-
-  proto.getDetailLedger = function ({ subjectCode, period, startDate, endDate, page = 1, pageSize = 50 }) {
-    if (!this.db) return { rows: [], total: 0, carryForward: 0, carriedForward: 0 };
-    this._ensureBookId();
-
-    let conds = " AND v.status = 'posted' AND v.book_id = ?";
-    const params = [this.currentBookId];
-    if (period) { conds += ' AND v.period = ?'; params.push(period); }
-    if (subjectCode) { conds += ' AND e.subject_code = ?'; params.push(subjectCode); }
-    if (startDate) { conds += ' AND v.voucher_date >= ?'; params.push(startDate); }
-    if (endDate) { conds += ' AND v.voucher_date <= ?'; params.push(endDate); }
-
-    const { total } = this.db.prepare(
-      `SELECT COUNT(*) as total FROM gl_voucher_entry e JOIN gl_voucher v ON v.id=e.voucher_id WHERE 1=1 ${conds}`
-    ).get(...params);
-
-    const offset = (page - 1) * pageSize;
-    const rows = this.db.prepare(`
-      SELECT v.voucher_date, v.voucher_word, v.voucher_no, v.remark AS voucher_remark,
-             e.summary, e.subject_code, e.subject_name, e.debit, e.credit,
-             e.quantity, e.unit_price, e.unit
-      FROM gl_voucher_entry e JOIN gl_voucher v ON v.id = e.voucher_id
-      WHERE 1=1 ${conds}
-      ORDER BY v.voucher_date, v.voucher_no, e.line_no
-      LIMIT ? OFFSET ?
-    `).all(...params, pageSize, offset);
-
-    const self = this;
-    let carryForward = 0;
-
-    // 先获取科目方向与期初余额（承前页须包含期初余额）
-    const subjDir = subjectCode
-      ? self.db.prepare('SELECT direction FROM bd_subject WHERE code = ? AND book_id = ?').get(subjectCode, self.currentBookId)
-      : null;
-    const isDebitDir = subjDir?.direction === 'debit';
-
-    if (subjectCode) {
-      // 期初余额：取 year-period 的年初余额
-      const openPeriod = period ? (period.substring(0, 4) + '-01') : (startDate ? startDate.substring(0, 4) + '-01' : null);
-      if (openPeriod) {
-        const openings = this.getOpeningBalances(openPeriod);
-        const op = openings.find(o => o.subject_code === subjectCode);
-        if (op) {
-          carryForward = isDebitDir
-            ? (op.debit || 0) - (op.credit || 0)
-            : (op.credit || 0) - (op.debit || 0);
-        }
-      }
-    }
-
-    if (subjectCode && page > 1) {
-      const prev = self.db.prepare(`
-        SELECT SUM(e.debit) AS total_debit, SUM(e.credit) AS total_credit
-        FROM gl_voucher_entry e JOIN gl_voucher v ON v.id=e.voucher_id
-        WHERE 1=1 ${conds} LIMIT ?
-      `).get(...params, offset);
-      if (prev) {
-        carryForward += isDebitDir
-          ? (prev.total_debit || 0) - (prev.total_credit || 0)
-          : (prev.total_credit || 0) - (prev.total_debit || 0);
-      }
-    }
-
-    let carriedForward = carryForward;
-    for (const r of rows) {
-      carriedForward += isDebitDir
-        ? Number(r.debit || 0) - Number(r.credit || 0)
-        : Number(r.credit || 0) - Number(r.debit || 0);
-    }
-
-    return { rows, total, carryForward, carriedForward };
-  };
-
-  // ==================== 试算平衡 ====================
-
-  proto.getTrialBalance = function (period) {
-    const balances = this.getSubjectBalance({ period });
-    let tdo = 0, tco = 0, tda = 0, tca = 0, tde = 0, tce = 0;
-    const rows = balances.map(row => {
-      tdo += row.openingDebit; tco += row.openingCredit;
-      tda += row.debitAmount; tca += row.creditAmount;
-      // 按科目方向正确归类期末余额
-      const isDebitDir = row.direction === 'debit';
-      const ed = isDebitDir ? Math.max(0, row.balance) : Math.max(0, -row.balance);
-      const ec = isDebitDir ? Math.max(0, -row.balance) : Math.max(0, row.balance);
-      tde += ed; tce += ec;
-      return { ...row, endingDebit: ed, endingCredit: ec };
-    });
-    return { rows, totals: { openingDebit: tdo, openingCredit: tco, amountDebit: tda, amountCredit: tca, endingDebit: tde, endingCredit: tce } };
-  };
 
   // ==================== 利润表 ====================
 
@@ -202,7 +26,6 @@ function applyReportMethods(FinanceDatabase) {
       'SELECT * FROM report_template WHERE book_id = ? AND report_type = ? ORDER BY display_order'
     ).all(this.currentBookId, 'profit');
 
-    // 本年累计：按月累加发生额，期初余额只取一次，月末重新计算余额
     const cumMap = new Map();
     const yrOpenings = this.getOpeningBalances(yrStart);
     for (let m = 1; m <= mn; m++) {
@@ -210,7 +33,6 @@ function applyReportMethods(FinanceDatabase) {
       const mbs = this.getSubjectBalance({ period: mp });
       for (const b of mbs) {
         if (!cumMap.has(b.code)) {
-          // 首次遇到该科目：保存期初余额（来自年初），发生额取当月值
           const yOp = yrOpenings.find(o => o.subject_code === b.code);
           cumMap.set(b.code, {
             code: b.code, name: b.name,
@@ -220,14 +42,12 @@ function applyReportMethods(FinanceDatabase) {
             creditAmount: b.creditAmount || 0,
           });
         } else {
-          // 后续月份：只累加发生额，不重复加期初
           const p = cumMap.get(b.code);
           p.debitAmount += b.debitAmount || 0;
           p.creditAmount += b.creditAmount || 0;
         }
       }
     }
-    // 按科目方向重新计算累计余额
     for (const [code, item] of cumMap) {
       const subj = this.db.prepare('SELECT direction FROM bd_subject WHERE code = ? AND book_id = ?').get(code, this.currentBookId);
       item.balance = subj?.direction === 'debit'
@@ -268,7 +88,6 @@ function applyReportMethods(FinanceDatabase) {
       this.getOpeningBalances(yrStart).map(o => [o.subject_code, o])
     );
 
-    // 获取净利润（跨报表引用：所有者权益需包含当期净利润）
     let netProfit = 0;
     try {
       const ps = this.getProfitStatement(cp);
@@ -353,7 +172,6 @@ function applyReportMethods(FinanceDatabase) {
     const totalNet = opNet + invNet + finNet;
 
     const rows = [
-      // === 经营活动 ===
       { row_no:1, name:'一、经营活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'operating', amount:0 },
       { row_no:2, name:'销售商品、提供劳务收到的现金', bold:false, indent_level:0, section:'operating', amount:opIn },
       { row_no:3, name:'收到其他与经营活动有关的现金', bold:false, indent_level:0, section:'operating', amount:0 },
@@ -364,7 +182,6 @@ function applyReportMethods(FinanceDatabase) {
       { row_no:9, name:'支付其他与经营活动有关的现金', bold:false, indent_level:0, section:'operating', amount:0 },
       { row_no:10, name:'经营活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'operating', amount:opOut },
       { row_no:11, name:'经营活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'operating', amount:opNet },
-      // === 投资活动 ===
       { row_no:13, name:'二、投资活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'investing', amount:0 },
       { row_no:14, name:'收回短期投资、长期债券投资和长期股权投资收到的现金', bold:false, indent_level:0, section:'investing', amount:0 },
       { row_no:15, name:'取得投资收益收到的现金', bold:false, indent_level:0, section:'investing', amount:0 },
@@ -372,7 +189,6 @@ function applyReportMethods(FinanceDatabase) {
       { row_no:18, name:'购建固定资产、无形资产和其他非流动资产支付的现金', bold:false, indent_level:0, section:'investing', amount:invOut },
       { row_no:20, name:'投资活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'investing', amount:invOut },
       { row_no:21, name:'投资活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'investing', amount:invNet },
-      // === 筹资活动 ===
       { row_no:23, name:'三、筹资活动产生的现金流量：', is_header:true, bold:true, indent_level:0, section:'financing', amount:0 },
       { row_no:24, name:'取得借款收到的现金', bold:false, indent_level:0, section:'financing', amount:finIn },
       { row_no:25, name:'吸收投资者投资收到的现金', bold:false, indent_level:0, section:'financing', amount:0 },
@@ -381,7 +197,6 @@ function applyReportMethods(FinanceDatabase) {
       { row_no:29, name:'分配利润支付的现金', bold:false, indent_level:0, section:'financing', amount:0 },
       { row_no:30, name:'筹资活动现金流出小计', is_total:true, bold:true, indent_level:0, section:'financing', amount:finOut },
       { row_no:31, name:'筹资活动产生的现金流量净额', is_total:true, bold:true, indent_level:0, section:'financing', amount:finNet },
-      // === 汇总 ===
       { row_no:33, name:'四、现金及现金等价物净增加额', is_total:true, bold:true, indent_level:0, section:'summary', amount:totalNet },
     ];
 
@@ -506,11 +321,9 @@ function applyReportMethods(FinanceDatabase) {
     const yr = parseInt(cp.substring(0, 4));
     const yrStart = yr + '-01';
 
-    // 获取本年期初余额（即上年年末余额）
     const yearOpenings = this.getOpeningBalances(yrStart);
     const opMap = new Map(yearOpenings.map(o => [o.subject_code, o]));
 
-    // 获取本期净利润
     let netProfit = 0;
     try {
       const ps = this.getProfitStatement(cp);
@@ -520,7 +333,6 @@ function applyReportMethods(FinanceDatabase) {
       }
     } catch (e) { netProfit = 0; }
 
-    // 计算期初余额辅助函数
     const getOpening = (code) => {
       const op = opMap.get(code);
       return op ? (Number(op.debit) - Number(op.credit)) : 0;
@@ -530,7 +342,6 @@ function applyReportMethods(FinanceDatabase) {
       { row_no: 1, name: '一、上年年末余额', is_header: true, bold: true, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: 0 },
     ];
 
-    // 上年年末各科目余额（即本年年初余额）
     const lastYearOp4001 = getOpening('4001');
     const lastYearOp4002 = getOpening('4002');
     const lastYearOp4101 = getOpening('4101');
@@ -550,10 +361,8 @@ function applyReportMethods(FinanceDatabase) {
     const openingTotal = lastYearOp4001 + lastYearOp4002 + lastYearOp4101 + lastYearOp4104;
     rows.push({ row_no: 12, name: '年初余额合计', is_total: true, bold: true, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: openingTotal });
 
-    // 本年增减变动
     rows.push({ row_no: 13, name: '三、本年增减变动金额', is_header: true, bold: true, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: 0 });
 
-    // 净利润影响未分配利润
     const npChange = netProfit;
     rows.push({ row_no: 14, name: '（一）净利润', is_header: false, is_total: false, bold: false, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: npChange, total: npChange });
     rows.push({ row_no: 15, name: '（二）其他综合收益', is_header: false, is_total: false, bold: false, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: 0 });
@@ -563,7 +372,6 @@ function applyReportMethods(FinanceDatabase) {
     rows.push({ row_no: 19, name: '（四）所有者权益内部结转', is_header: false, is_total: false, bold: false, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: 0 });
     rows.push({ row_no: 20, name: '本年增减变动合计', is_total: true, bold: true, indent_level: 0, paid_in_capital: 0, capital_reserve: 0, surplus_reserve: 0, undistributed_profit: 0, total: npChange });
 
-    // 年末余额 = 年初 + 变动
     const end4001 = lastYearOp4001;
     const end4002 = lastYearOp4002;
     const end4101 = lastYearOp4101;
@@ -590,13 +398,11 @@ function applyReportMethods(FinanceDatabase) {
     const cp = period || '2026-06';
     const yrStart = cp.substring(0, 4) + '-01';
 
-    // 查询应交税费(2221)下的所有明细科目
     const taxSubjects = this.db.prepare(
       "SELECT code, name FROM bd_subject WHERE book_id = ? AND code LIKE '2221%' AND enabled = 1 ORDER BY code"
     ).all(this.currentBookId);
 
     if (taxSubjects.length === 0) {
-      // 如果没有明细科目，至少包含一级科目
       const main = this.db.prepare(
         "SELECT code, name FROM bd_subject WHERE book_id = ? AND code = '2221' AND enabled = 1"
       ).get(this.currentBookId);
@@ -614,7 +420,6 @@ function applyReportMethods(FinanceDatabase) {
       const opBalance = op ? (Number(op.debit) - Number(op.credit)) : 0;
       const dAmt = bal?.debitAmount || 0;
       const cAmt = bal?.creditAmount || 0;
-      // 应交税费是贷方科目，余额 = 期初贷方 + 本期贷方 - 本期借方
       const endingBal = -opBalance + cAmt - dAmt;
 
       return {
@@ -640,16 +445,13 @@ function applyReportMethods(FinanceDatabase) {
     const cp = period || '2026-06';
     const yr = parseInt(cp.substring(0, 4));
 
-    // 获取所有费用类科目 (expense category)
     const expenseSubjects = this.db.prepare(
       "SELECT code, name FROM bd_subject WHERE book_id = ? AND category = 'expense' AND enabled = 1 ORDER BY code"
     ).all(this.currentBookId);
 
-    // 当期余额
     const monthBalances = this.getSubjectBalance({ period: cp });
     const monthMap = new Map(monthBalances.map(b => [b.code, b]));
 
-    // 本年累计（年初至今）
     const yrStart = yr + '-01';
     const cumBalances = this._getCumulativeSubjectBalance(cp, yrStart);
     const cumMap = new Map(cumBalances.map(b => [b.code, b]));
@@ -671,30 +473,54 @@ function applyReportMethods(FinanceDatabase) {
     return { company_name: book?.company_name || '', period: cp, rows };
   };
 
-  // ==================== 应收账款账龄分析 ====================
+  // ==================== 固定资产折旧汇总表 ====================
+
+  proto.getDepreciationSummary = function (period) {
+    this._ensureBookId();
+
+    const book = this.db.prepare('SELECT name AS company_name FROM acct_book WHERE id = ?').get(this.currentBookId);
+    const cp = period || '2026-06';
+
+    const cards = this.db.prepare(
+      "SELECT * FROM fa_asset_card WHERE book_id = ? AND status NOT IN ('报废','已处置') ORDER BY category, asset_code"
+    ).all(this.currentBookId);
+
+    const rows = cards.map(c => {
+      const accDep = c.accumulated_depreciation;
+      const netVal = c.net_value;
+
+      return {
+        asset_code: c.asset_code,
+        asset_name: c.asset_name,
+        category: c.category,
+        original_value: c.original_value,
+        useful_life_months: c.useful_life_years * 12,
+        monthly_depreciation: c.monthly_depreciation,
+        accumulated_depreciation: accDep,
+        net_value: netVal,
+        department: c.department
+      };
+    });
+
+    return { company_name: book?.company_name || '', period: cp, rows };
+  };
+
+  // ==================== 应收/应付账款账龄分析 ====================
 
   proto.getReceivableAging = function (period) {
     return this._getAgingAnalysis(period, 'receivable');
   };
 
-  // ==================== 应付账款账龄分析 ====================
-
   proto.getPayableAging = function (period) {
     return this._getAgingAnalysis(period, 'payable');
   };
 
-  /**
-   * 通用账龄分析（应收账款/应付账款）
-   * @param {'receivable'|'payable'} type
-   */
   proto._getAgingAnalysis = function (period, type) {
     if (!this.db) return { company_name: '', period, type, rows: [], summary: { within_30: 0, within_90: 0, within_180: 0, within_365: 0, over_365: 0, total: 0 } };
     this._ensureBookId();
 
     const book = this.db.prepare('SELECT name AS company_name FROM acct_book WHERE id = ?').get(this.currentBookId);
     const cp = period || '2026-06';
-
-    // 应收账款 = 1122, 应付账款 = 2202
     const subjectCode = type === 'receivable' ? '1122' : '2202';
     const endDate = cp + '-31';
 
@@ -711,7 +537,6 @@ function applyReportMethods(FinanceDatabase) {
 
     const rows = [];
     const summary = { within_30: 0, within_90: 0, within_180: 0, within_365: 0, over_365: 0, total: 0 };
-
     const nowDate = new Date(parseInt(cp.substring(0, 4)), parseInt(cp.substring(5, 7)), 0);
 
     for (const e of entries) {
@@ -750,7 +575,6 @@ function applyReportMethods(FinanceDatabase) {
       else summary.over_365 += amt;
     }
 
-    // 先求和再舍入，避免累加舍入误差
     const rawTotal = summary.within_30 + summary.within_90 + summary.within_180 + summary.within_365 + summary.over_365;
     summary.within_30 = Math.round(summary.within_30 * 100) / 100;
     summary.within_90 = Math.round(summary.within_90 * 100) / 100;
@@ -764,9 +588,6 @@ function applyReportMethods(FinanceDatabase) {
 
   // ==================== 内部方法 ====================
 
-  /**
-   * 累计科目余额（年初至今）
-   */
   proto._getCumulativeSubjectBalance = function (endPeriod, openingPeriod) {
     this._ensureBookId();
     const self = this;
@@ -775,9 +596,9 @@ function applyReportMethods(FinanceDatabase) {
       SELECT e.subject_code AS code, MAX(e.subject_name) AS name,
              SUM(e.debit) AS debit_amount, SUM(e.credit) AS credit_amount
       FROM gl_voucher_entry e JOIN gl_voucher v ON v.id = e.voucher_id
-      WHERE v.status = 'posted' AND v.book_id = ? AND v.period <= ?
+      WHERE v.status = 'posted' AND v.book_id = ? AND v.period <= ? AND v.period >= ?
       GROUP BY e.subject_code ORDER BY e.subject_code
-    `).all(this.currentBookId, endPeriod);
+    `).all(this.currentBookId, endPeriod, openingPeriod);
 
     const openings = this.getOpeningBalances(openingPeriod);
 
@@ -799,21 +620,17 @@ function applyReportMethods(FinanceDatabase) {
     });
   };
 
-  /**
-   * 根据报表模板填充金额（含公式计算）
-   * 委托给 shared/report-formulas.cjs 统一实现
-   * @param {Object} [opts] 可选参数 { netProfitAmount }
-   */
   proto._fillTemplateAmount = function (templateRows, balanceMap, openingMap, monthlyMap, opts) {
     return fillTemplateAmount(templateRows, balanceMap, openingMap, monthlyMap, opts);
   };
 
-  /**
-   * 预置报表模板（首次使用）
-   */
   proto._seedReportTemplates = function () {
     if (!this.db) return;
     this._ensureBookId();
+    this.db.prepare(
+      "UPDATE report_template SET subject_codes = '4103,4104' WHERE book_id = ? AND report_type = 'balance' AND row_no = 52"
+    ).run(this.currentBookId);
+
     const count = this.db.prepare('SELECT COUNT(*) as cnt FROM report_template WHERE book_id = ?').get(this.currentBookId);
     if (count && count.cnt > 0) return;
 
@@ -829,4 +646,4 @@ function applyReportMethods(FinanceDatabase) {
   };
 }
 
-module.exports = { applyReportMethods };
+module.exports = { applyStatementMethods };

@@ -82,7 +82,7 @@ const REPORT_TEMPLATES = [
   { report_type:'balance', section:'equity', row_no:49, name:'实收资本（或股本）', bold:0, subject_codes:'4001', display_order:49 },
   { report_type:'balance', section:'equity', row_no:50, name:'资本公积', bold:0, subject_codes:'4002', display_order:50 },
   { report_type:'balance', section:'equity', row_no:51, name:'盈余公积', bold:0, subject_codes:'4101', display_order:51 },
-  { report_type:'balance', section:'equity', row_no:52, name:'未分配利润', bold:0, subject_codes:'4104', display_order:52 },
+  { report_type:'balance', section:'equity', row_no:52, name:'未分配利润', bold:0, subject_codes:'4103,4104', display_order:52 },
   { report_type:'balance', section:'equity', row_no:53, name:'所有者权益合计', is_total:1, bold:1, display_order:53 },
   { report_type:'balance', section:'equity', row_no:54, name:'负债和所有者权益总计', is_total:1, bold:1, display_order:99 },
   // ===== 所有者权益变动表 =====

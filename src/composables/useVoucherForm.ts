@@ -418,7 +418,8 @@ export function useVoucherForm(
   async function handleAudit() {
     if (!props.voucher?.id) return;
     try {
-      const r: any = await api.auditVoucher(props.voucher.id);
+      const userAlias = auth.state.user?.alias || auth.state.user?.username || 'admin';
+      const r: any = await api.auditVoucher(props.voucher.id, userAlias);
       if (r?.__error) {
         ElMessage.error(r.__error);
         return;

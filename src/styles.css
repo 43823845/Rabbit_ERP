@@ -178,6 +178,13 @@ button:focus-visible,
   font-weight: 600 !important;
   font-size: 0.8125rem !important;
   letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--epp-line) !important;
+}
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--epp-line-light) !important;
+}
+.el-table--border .el-table__cell {
+  border-right: 1px solid var(--epp-line-light) !important;
 }
 
 /* ---- Element Plus 全局按钮 —— 绿色 ---- */
